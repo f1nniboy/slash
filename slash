@@ -401,6 +401,28 @@ pkg_extract() {
 	done < "${pkg_dir}/sources" || die "Failed to extract ${source_file}."
 }
 
+# Strip binaries and libraries of a package.
+pkg_strip() {
+	# Let the user toggle whether the package's binaries should be stripped.
+	[ -f "${pkg_build_dir}/nostrip" ] || equals "${SLASH_STRIP}" 0 && return
+
+	info "Stripping binaries and libraries of '${pkg_name}'..."
+
+	while read -r file; do
+		case ${file} in
+			# Dynamic libraries
+			/usr/lib/*.so.*)
+				strip -g -R .comment -R .note "${pkg_root_dir}${file}"
+			;;
+
+			# Static libraries
+			/usr/lib/*[!.so].*)
+				strip -s -R .comment -R .note "${pkg_root_dir}${file}"
+			;;
+		esac
+	done < "${sys_ins_dir}/${pkg_name}/manifest"
+}
+
 # Generate the manifest for a package.
 pkg_manifest() {
 	info "Creating manifest..."
@@ -432,7 +454,7 @@ pkg_manifest() {
 pkg_build_all() {
 	for pkg do
 		# Get information about the package.
-		pkg_find "${pkg}"
+		pkg_find "${pkg}" 1
 
 		# Prompt the user if they want to build an already installed package again.
 		pkg_installed "${pkg_name}" && prompt "Package is already installed, do you still want to build it?"
@@ -446,6 +468,9 @@ pkg_build_all() {
 
 		# Create a manifest for the package.
 		pkg_manifest
+
+		# Strip the package's binaries and libraries.
+		pkg_strip
 
 		# Create a tarball from the package's files.
 		pkg_tar
@@ -819,25 +844,7 @@ args() {
 		;;
 
 		b|build)
-			# Prompt the user if they want to build an already installed package again.
-			pkg_installed "${pkg_name}" && prompt "Package is already installed, do you still want to build it?"
-
-			# Download and extract the sources.
-			pkg_sources
-			[ -f "${pkg_dir}/sources" ] && pkg_extract
-
-			# Build the package.
-			pkg_build
-
-			# Create a manifest for the package.
-			pkg_manifest
-
-			# Create a tarball from the package's files.
-			pkg_tar
-
-			# Ask the user if they want to install the package.
-			prompt "Do you want to install the package?"
-			pkg_install
+			pkg_build_all "$@"
 		;;
 
 		i|install)
