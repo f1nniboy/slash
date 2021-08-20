@@ -151,6 +151,18 @@ file_rwx() {
 	done
 }
 
+# Run all hooks in SLASH_HOOK.
+# $@ = arguments to the hook
+run_hook() {
+	IFS=:
+
+	for hook in ${SLASH_HOOK}; do
+		"${hook}" "$@" || die "Failed to run hook '${hook}'."
+	done
+
+	unset IFS
+}
+
 
 # Colors
 
@@ -315,9 +327,14 @@ pkg_sources() {
 	while read -r src dest || ok "${src}"; do
 		pkg_source_resolve "${src}" "${dest}"
 
+		# $1 = package name
+		# $2 = source
+		run_hook "pre-source" "${pkg_name}" "${url}"
+
 		case ${url} in
 			git+*)
 				mkcd "${source_file}"
+				echo $url
 				pkg_source_git "${url##git+}"
 			;;
 
@@ -326,13 +343,17 @@ pkg_sources() {
 				pkg_source_get "${file_name}" "${url##url+}"
 			;;
 		esac
+
+		# $1 = package name
+		# $2 = source
+		run_hook "post-source" "${pkg_name}" "${url}"
 	done < "${pkg_dir}/sources"
 }
 
 # Download a Git repository.
 # $1 = URL to repository
 pkg_source_git() {
-	url=$1
+	url="$1"
 
 	# If it's not a Git repository yet, initialize it.
     if is_git_repo "${PWD}"; then
@@ -383,11 +404,21 @@ pkg_extract_tar() {
 pkg_extract() {
 	info "Extracting sources..."
 	
+	# $1 = package name
+	# $2 = path to root directory
+	run_hook "pre-extract" "${pkg_name}" "${pkg_root_dir}"
+
 	while read -r src dest || ok "${src}"; do
 		pkg_source_resolve "${src}" "${dest}"
 		mkcd "${pkg_build_dir}"
 
-		case ${source_file} in
+		case ${url} in
+			git+*)
+				set +f
+				cp -Rf "${source_file}"/* .
+				set -f
+			;;
+
 			*.tar|*.tar.??|*.tar.???|*.tar.????|*.t?z)
 				ok "${dest_file}" && mkcd "${dest_file}"
 				pkg_extract_tar "${source_file}"
@@ -420,7 +451,7 @@ pkg_strip() {
 				strip -s -R .comment -R .note "${pkg_root_dir}${file}"
 			;;
 		esac
-	done < "${sys_ins_dir}/${pkg_name}/manifest"
+	done < "${pkg_root_dir}/${pkg_ins_dir}/${pkg_name}/manifest"
 }
 
 # Generate the manifest for a package.
@@ -488,6 +519,10 @@ pkg_build() {
 
 	info "Starting build..."
 
+	# $1 = package name
+	# $2 = path to build directory
+	run_hook "pre-build" "${pkg_name}" "${pkg_build_dir}"
+
 	mkdir -p "${pkg_root_dir}/${pkg_ins_dir}/${pkg_name}"
 	cd "${pkg_build_dir}"
 
@@ -507,6 +542,10 @@ pkg_build() {
 			err "Build failed."
 			err "Log saved to '${log_file}'."
 
+			# $1 = package name
+			# $2 = path to build directory
+			(run_hook "build-fail" "${pkg_name}" "${pkg_build_dir}")
+
 			# Clean up.
 			pkg_clean
 			kill 0
@@ -518,6 +557,10 @@ pkg_build() {
 
 	# Copy the package files to the database.
 	cp -LRf "${pkg_dir}" "${pkg_root_dir}/${pkg_ins_dir}"
+
+	# $1 = package name
+	# $2 = path to root directory
+	run_hook "post-build" "${pkg_name}" "${pkg_root_dir}"
 
 	info "Successfully built."
 }
@@ -554,6 +597,10 @@ pkg_tar() {
 
 	# Change back to the old directory.
 	cd "${OLDPWD}"
+
+	# $1 = package name
+	# $2 = path to archive
+	run_hook "post-package" "${pkg_name}" "${tar_file}"
 
 	info "Created tarball."
 }
@@ -678,6 +725,10 @@ pkg_install() {
 	# Check for file conflicts with other packages.
 	pkg_conflicts
 
+	# $1 = package name
+	# $2 = path to extracted package
+	run_hook "pre-install" "${pkg_name}" "${PWD}"
+
 	info "Installing package..."
 
 	# If the package is already installed and this is an upgrade, make
@@ -714,6 +765,9 @@ pkg_install() {
 		# Reset 'trap'. We don't need to block '^C' anymore.
 		trap pkg_clean EXIT INT
 
+		# $1 = package name
+		run_hook "post-install" "${pkg_name}"
+
 		info "Installed successfully."
 	else
 		pkg_clean
@@ -733,6 +787,9 @@ pkg_remove() {
 	trap '' INT
 
 	info "Removing package..."
+
+	# $1 = package name
+	run_hook "pre-remove" "${pkg_name}"
 
 	# Remove the package.
 	pkg_remove_files < "${sys_ins_dir}/${pkg_name}/manifest"
@@ -778,6 +835,9 @@ repo_update_repo() {
 
 	info "Updating repository '$1'..."
 
+	# $1 = path to repository
+	run_hook "pre-update" "${PWD}"
+
 	case ${repo_type} in
 		git)
 			repo_update_git "$@"
@@ -787,6 +847,9 @@ repo_update_repo() {
 			info "Not a Git repository."
 		;;
 	esac
+
+	# $1 = path to repository
+	run_hook "post-update" "${PWD}"
 }
 
 # Update the repositories.
