@@ -1,0 +1,11 @@
+#!/bin/sh -e
+# Display all files owned by a package.
+
+pkg="${1:-${PWD##*/}}"
+
+slash list "${pkg}" > /dev/null || {
+	echo "Usage: $0 [package]" >&2
+	exit 1
+}
+
+cat "${SLASH_ROOT}/var/db/slash/installed/${pkg}/manifest" 2> /dev/null

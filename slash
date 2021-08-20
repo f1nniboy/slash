@@ -1,0 +1,938 @@
+#!/bin/sh
+
+# A simple package manager.
+
+
+# Constants
+SLASH_VERSION="0.0.1"
+
+
+# Utilities
+
+# Log something to the terminal.
+# $1 = content
+# $2 = color
+log() {
+    printf "%b%b>>>%b %s\n" "$2" "${COLOR_BOLD}" "${COLOR_RESET}" "$1"
+}
+
+info() {
+    log "$1" "${COLOR_BLUE}"
+}
+
+warn() {
+    log "$1" "${COLOR_YELLOW}"
+}
+
+err() {
+    log "$1" "${COLOR_RED}"
+}
+
+# Exit the program.
+die() {
+    ok "$1" && err "$1"
+    exit 1
+}
+
+# Check if a string is non-null.
+# $1 = string to check
+ok() {
+	[ -n "$1" ];
+}
+
+# Check if a string is null.
+# $1 = string to check
+null() {
+	[ -z "$1" ];
+}
+
+# Check if a string list contains the specified string.
+# $1 = string list
+# $2 = string to look for
+contains() {
+	case " $1 " in *" $2 "*) return 0; esac; return 1
+}
+
+# Create a directory and change into it.
+# $1 = directory path
+mkcd() {
+    mkdir -p "$@" && cd "$1"
+}
+
+# Check if a directory is empty.
+# $1 = directory path
+is_empty() {
+	null "$(ls -A "$1")" && return 0 && return 1
+}
+
+# Check if a string is equal to another.
+# $1 = first string to check
+# $2 = second string to check
+equals() {
+    # This replaces '[ "$var" = str ]' and '[ "$var" != str ]'.
+    case $1 in "$2") return 0 ;; *) return 1; esac
+}
+
+# Replace all occurrences of substrings with substrings. This
+# function takes pairs of arguments iterating two at a time
+# until everything has been replaced.
+fnr() {
+    fnr_result="$1"
+    shift 1
+
+    while :; do case ${fnr_result}-$# in
+        *"$1"*) fnr_result=${fnr_result%"$1"*}${2}${fnr_result##*"$1"} ;;
+           *-2) break ;;
+             *) shift 2
+    esac done
+}
+
+# Show the user a prompt.
+# $1 = message
+prompt() {
+    if ! equals "${SLASH_PROMPT}" 0; then
+		ok "$1" && info "$1"
+        info "Continue?"
+
+        read -r
+    fi
+}
+
+# Create a uniquely named temporary file and store its absolute path
+# in a variable.
+# $1 = name of the temporary file
+tmp_file() {
+	tmp_file="${pkg_tmp_dir}/$1"
+	: > "${tmp_file}" || die "Failed to create temporary file."
+}
+
+# Create a uniquely named temporary file and make a duplicate of it.
+# $1 = name of the temporary file
+# $2 = path to the file which should be copied
+tmp_file_copy() {
+	tmp_file "$1"
+	! [ -f "$2" ] || cp -f "$2" "${tmp_file}"
+}
+
+# Resolve a symlink.
+# Set the original path if it isn't a symlink.
+# $1 = path to resolve
+resolve_path() {
+	resolved_path="$(readlink "$1" || printf "%s\n" "$1")"
+}
+
+# Check if a path is a Git repository.
+# $1 = path to check
+is_git_repo() {
+	git rev-parse 2> /dev/null && return 1 || return 0
+}
+
+# Convert the output of 'ls' (rwxrwx---) to octal. This is simply
+# a 1-9 loop with the second digit being the value of the field.
+#
+# NOTE: This drops setgid/setuid permissions and does not include
+# them in the conversion. This is intentional.
+file_rwx() {
+	unset oct o
+	rwx="$(ls -ld "$1")"
+
+	for c in 14 22 31 44 52 61 74 82 91; do
+		rwx=${rwx#?}
+
+		case ${rwx} in
+			[rwx]*) o=$((o + ${c#?})) ;;
+			 [st]*) o=$((o + 1)) ;;
+		 esac
+
+		 case $((${c%?} % 3)) in 0)
+			oct="${oct}${o}"
+			o=0
+		esac
+	done
+}
+
+
+# Colors
+
+# Only set colors if the user didn't disable colors.
+equals "${NO_COLOR}" 1 || {
+    COLOR_RED="\e[0;91m"
+	COLOR_YELLOW="\e[0;93m"
+    COLOR_BLUE="\e[0;94m"
+
+    COLOR_BOLD="\e[1m"
+    COLOR_RESET="\e[0m"
+}
+
+
+# Package functions
+
+# Clean all the files and directories we created.
+pkg_clean() {
+	# Only remove the temporary directory if the
+	# debug mode isn't enabled.
+	null "${SLASH_DEBUG}" && rm -rf "${pkg_cache_dir}"
+}
+
+# Validate SLASH_PATH.
+pkg_path() {
+	null "${SLASH_PATH}" && die "SLASH_PATH is not set."
+
+	IFS=:
+
+	for path in ${SLASH_PATH}; do
+		[ -d "${path}" ] || die "SLASH_PATH contains '${path}', a non-existent repository."
+	done
+
+	unset IFS
+}
+
+# Get the version of a package.
+pkg_get_version() {
+	# Read the second field as _ for backwards compability with
+	# KISS packages.
+	read -r pkg_version _ 2> /dev/null < "${pkg_dir}/version" ||
+		die "Failed to read version file for '${pkg_name}'."
+}
+
+# Get the major, minor, patch and ident versions of a package.
+pkg_get_version_split() {
+	pkg_get_version
+
+	# Split the version on '.+-_' to obtain individual components.
+	IFS=.+-_ read -r pkg_version_major pkg_version_minor pkg_version_patch pkg_version_ident <<EOF
+${pkg_version}
+EOF
+}
+
+# Search for a package.
+# $1 = package name
+# $2 = set as current package
+pkg_find() {
+	_pkg_find "$@" || die "'$1' not found."
+}
+
+# Search for a package.
+# $1 = package name
+# $2 = set as current package
+_pkg_find() {
+	set -- "$1" "$2"
+	IFS=:
+
+	# Search for packages. */
+	set +f; for path in ${SLASH_PATH} "${sys_ins_dir}"; do
+		# Do not quote the argument to allow multiple packages
+		# as arguments.
+		for pkg_path in "${path}"/$1; do
+			test -d "${pkg_path}" && set -f -- "$@" "${pkg_path}"
+		done
+	done
+
+	unset IFS
+
+	# If no packages were found, return.
+	equals "$#" "2" && return 1
+
+	# Set the current package.
+	ok "$2" && {
+		pkg_dir="$3"
+		pkg_name="$1"
+	}
+
+	# Print the found packages.
+	null "$2" && shift 2 && for pkg; do info "${pkg}"; done
+
+	return 0
+}
+
+# Check if a directory is actually a valid package.
+# $1 = directory to check
+pkg_is_package() {
+	[ -f "$1/version" ] || return 1
+	[ -x "$1/build" ]   || return 1
+
+	return 0
+}
+
+# Check if a package is installed.
+# $1 = package name
+pkg_installed() {
+	[ -d "${sys_ins_dir}/$1" ];
+}
+
+# Format and resolve a source.
+# $1 = source
+# $2 = destination
+pkg_source_resolve() {
+	unset source_file file_name url
+
+    fnr "${1%"${1##*[!/]}"}" \
+        \\VERSION \  VERSION "${pkg_version}"         \  VERSION \
+        \\MAJOR   \  MAJOR   "${pkg_version_major}"   \  MAJOR \
+        \\MINOR   \  MINOR   "${pkg_version_minor}"   \  MINOR \
+        \\PATCH   \  PATCH   "${pkg_version_patch}"   \  PATCH \
+        \\IDENT   \  IDENT   "${pkg_version_ident}"   \  IDENT \
+        \\PACKAGE \  PACKAGE "${pkg_name}"            \  PACKAGE
+
+	set -- "${fnr_result}" "$2"
+
+	# Git repository
+	if null "${1##git+*}"; then
+		url="$1"
+		source_file="${pkg_src_dir}/${pkg_name}/${url##*/}"
+
+	# Remote source
+	elif null "${1##*://*}"; then
+		url="url+$1"
+		file_name="${url##*/}"
+		source_file="${pkg_src_dir}/${pkg_name}/${file_name}"
+		dest_file="${pkg_build_dir}/$2"
+
+	# Local relative file
+	elif [ -f "${pkg_dir}/$1" ]; then
+		source_file="${pkg_dir}/$1"
+		file_name="${source_file##*/}"
+		url="file+${source_file}"
+
+	# Local absolute file
+	elif [ -f "/${1##/}" ]; then
+		source_file="/${1##/}"
+		file_name="${source_file##*/}"
+		url="file+${source_file}"
+	fi
+}
+
+# Download the sources of a package.
+pkg_sources() {
+	# Get the package's version.
+	pkg_get_version_split
+
+	# Support packages without sources.
+	[ -f "${pkg_dir}/sources" ] || return 0
+
+	info "Reading sources..."
+
+	while read -r src dest || ok "${src}"; do
+		pkg_source_resolve "${src}" "${dest}"
+
+		case ${url} in
+			git+*)
+				mkcd "${source_file}"
+				pkg_source_git "${url##git+}"
+			;;
+
+			url+*)
+				mkcd "${pkg_src_dir}/${pkg_name}"
+				pkg_source_get "${file_name}" "${url##url+}"
+			;;
+		esac
+	done < "${pkg_dir}/sources"
+}
+
+# Download a Git repository.
+# $1 = URL to repository
+pkg_source_git() {
+	url=$1
+
+	# If it's not a Git repository yet, initialize it.
+    if is_git_repo "${PWD}"; then
+		info "Cloning '$1'..."
+
+		git init
+		git remote add origin "${url}"
+
+	# If it's already a Git repository, update its origin.
+	else
+		info "Updating '$1'..."
+		git remote set-url origin "${url}"
+	fi
+
+	# Set the depth to 1 to not clone the commit history.
+	git fetch -t --depth=1
+	git -c advice.detachedHead=0 checkout FETCH_HEAD
+}
+
+# Download a source.
+# $1 = file destination
+# $2 = source URL
+pkg_source_get() {
+	# Check if the source is already downloaded.
+	[ -f "$1" ] && info "Found '$1'." && return 0
+
+	info "Downloading '$2'..."
+
+	# Set the arguments based on the download utility.
+	case ${cmd_get##*/} in
+		aria2c|axel)	set -- -o   "$@" ;;
+		curl)			set -- -fLo "$@" ;;
+		wget|wget2)		set -- -O   "$@" ;;
+    esac
+
+	"${cmd_get}" "$@" || {
+		die "Failed to download '$3'."
+	}
+}
+
+# Extract a tar archive.
+# $1 = path to file
+pkg_extract_tar() {
+	tar xf "$1" --strip-components 1
+}
+
+# Extract the sources of a package.
+pkg_extract() {
+	info "Extracting sources..."
+	
+	while read -r src dest || ok "${src}"; do
+		pkg_source_resolve "${src}" "${dest}"
+		mkcd "${pkg_build_dir}"
+
+		case ${source_file} in
+			*.tar|*.tar.??|*.tar.???|*.tar.????|*.t?z)
+				ok "${dest_file}" && mkcd "${dest_file}"
+				pkg_extract_tar "${source_file}"
+			;;
+
+			*?*)
+				cp -Rf "${source_file}" .
+				info "Copied '${source_file}'."
+			;;
+		esac
+	done < "${pkg_dir}/sources" || die "Failed to extract ${source_file}."
+}
+
+# Generate the manifest for a package.
+pkg_manifest() {
+	info "Creating manifest..."
+
+	manifest_file="${pkg_root_dir}/${pkg_ins_dir}/${pkg_name}/manifest"
+	
+	# Create a temporary file which we'll store the manifest in.
+	tmp_file "manifest"
+
+	# Generate a list of all files and directories.
+	# Append '/' to the end of directories so that they can be filtered out later.
+	# Filter out all "*.la" and "charset.alias" files.
+	{
+		printf "%s\n" "${manifest_file}"
+
+		find "${pkg_root_dir}" ! -path "${pkg_root_dir}" -type d -exec printf "%s/\n" {} + \
+			-o \( ! -type d -a ! -name \*.la -a ! -name charset.alias \) -print
+	
+    # Sort the output in reverse. Directories appear after their contents.
+	} | sort -ur > "${tmp_file}"
+
+	# Remove the prefix from each entry.
+	while read -r file; do
+		printf "%s\n" "${file#"${pkg_root_dir}"}"
+	done < "${tmp_file}" > "${manifest_file}"
+}
+
+# Build all the packages.
+pkg_build_all() {
+	for pkg do
+		# Get information about the package.
+		pkg_find "${pkg}"
+
+		# Prompt the user if they want to build an already installed package again.
+		pkg_installed "${pkg_name}" && prompt "Package is already installed, do you still want to build it?"
+
+		# Download and extract the sources.
+		pkg_sources
+		[ -f "${pkg_dir}/sources" ] && pkg_extract
+
+		# Build the package.
+		pkg_build
+
+		# Create a manifest for the package.
+		pkg_manifest
+
+		# Create a tarball from the package's files.
+		pkg_tar
+
+		# Ask the user if they want to install the package.
+		prompt "Do you want to install the package?"
+		pkg_install
+	done
+}
+
+# Build a package.
+pkg_build() {
+	# Get the package's version.
+	pkg_get_version "${pkg_dir}"
+
+	info "Starting build..."
+
+	mkdir -p "${pkg_root_dir}/${pkg_ins_dir}/${pkg_name}"
+	cd "${pkg_build_dir}"
+
+	# Create the log file.
+	log_file="${pkg_log_dir}/${pkg_name}-${pid}"
+	: > "${log_file}"
+
+	{
+		# $0 = build file
+		# $1 = path to root where files should be installed to
+
+		CC="${CC:-cc}" \
+		CXX="${CXX:-c++}" \
+		DESTDIR="${pkg_root_dir}" \
+		\
+		"${pkg_dir}/build" "${pkg_root_dir}" 2>&1 || {
+			err "Build failed."
+			err "Log saved to '${log_file}'."
+
+			# Clean up.
+			pkg_clean
+			kill 0
+		}
+	} | tee "${log_file}"
+
+	# Delete the log file if it shouldn't be kept.
+	equals "${SLASH_KEEP_LOG}" 1 || rm -f "${log_file}"
+
+	# Copy the package files to the database.
+	cp -LRf "${pkg_dir}" "${pkg_root_dir}/${pkg_ins_dir}"
+
+	info "Successfully built."
+}
+
+# Find the tarball of a built package.
+pkg_cache() {
+	pkg_get_version
+	tar_file="${pkg_bin_dir}/${pkg_name}-${pkg_version}.tar.gz"
+
+	# If the file doesn't exist, return 1.
+	# The caller will handle this error.
+	[ -f "${tar_file}" ];
+}
+
+# Create a tarball out of the package's files.
+# The tarball also contains the database entry.
+pkg_tar() {
+	info "Creating tarball..."
+
+	tar_file="${pkg_bin_dir}/${pkg_name}-${pkg_version}.tar.${compress_method}"
+
+	# Use "cd" to avoid tar's "-C" flag which may not be
+	# portable across implementations.
+	cd "${pkg_root_dir}"
+
+	tar cf - . | case $compress_method in
+		bz2)  bzip2 -z ;;
+		gz)   gzip -6  ;;
+		lzma) lzma -z  ;;
+		lz)   lzip -z  ;;
+		xz)   xz -zT0  ;;
+		zst)  zstd -z  ;;
+	esac > "${tar_file}"
+
+	# Change back to the old directory.
+	cd "${OLDPWD}"
+
+	info "Created tarball."
+}
+
+# Copy files and create directories.
+# $1 = destination
+# $2 = 'test' flags
+pkg_install_files() {
+	while read -r file; do
+		dest_file=${SLASH_ROOT:+"${SLASH_ROOT}"}${file%%/}
+		ext_file="${pkg_ext_dir}${file%%/}"
+
+		case ${file} in
+			*/)
+				[ -d "${dest_file}" ] || {
+					file_rwx "$1/${file#/}"
+					mkdir -m "${oct}" "${dest_file}"
+				}
+			;;
+
+			*)
+				# Skip directories and files which exist in verify mode.
+				[ -d "${ext_file}" ] || ! test "$2" "${dest_file}" ||
+					continue
+
+				# Symlinks
+				if [ -h "${ext_file}" ]; then
+					cp -fP "$1${file}" "${dest_file%/*}/."
+
+				# Regular files
+				else
+					cp -fP "$1${file}" "${dest_file}"
+				fi
+			;;
+		esac || return 1
+	done
+}
+
+# Remove a file list from the system. This function runs during
+# package installation and package removal. Combining the removals
+# in these two functions allows us to stop duplicating code.
+pkg_remove_files() {
+	while read -r file; do
+		dest_file=${SLASH_ROOT:+"${SLASH_ROOT}"}${file%%/}
+		ext_file="${pkg_ext_dir}/${file}"
+
+		# Skip all /etc files because the configuration would
+		# get removed.
+		case ${file} in /etc/?*[!/])
+			continue
+		esac
+
+		# Remove empty directories.
+		if [ -d "${dest_file}" ]; then
+			rmdir "${dest_file}" 2> /dev/null || :
+
+		# Remove everything else.
+		else
+			rm -f "${dest_file}"
+		fi
+	done
+}
+
+# Check for file conflicts between packages.
+pkg_conflicts() {
+	info "Checking for package conflicts..."
+
+	tmp_file "manifest-files"; manifest_files="${tmp_file}"
+	tmp_file "conflicts"; conflicts="${tmp_file}"
+
+	# Filter out all directories. Resolve all symlinks as well.
+	while read -r file; do case ${file} in *[!/])
+		resolve_path "${file}"
+		printf '%s\n' "${resolved_path}"
+	esac done < "${pkg_ext_dir}/${pkg_ins_dir}/${pkg_name}/manifest" > "${manifest_files}"
+
+	set +f
+
+	# Skip the conflict checks if no packages are installed.
+	is_empty "${sys_ins_dir}" && return 0
+
+	set +f; for manifest in "${sys_ins_dir}"/*/manifest; do set -f
+		set -- "$@" "${manifest}"
+	done
+
+	# Remove the current package from the package list.
+	fnr " $* " "${sys_ins_dir}/${pkg_name}/manifest" ""
+
+	# Intentional.
+	# shellcheck disable=2086
+	set -- ${fnr_result}
+
+	# Skip the conflict checks if no packages are on this list after
+	# the removal of the current package.
+	equals "$#" 0 && return 0
+
+	# Find file conflicts.
+	grep -Fxf "${manifest_files}" "$@" 2> /dev/null > "${conflicts}" || :
+
+	# If the file is not empty, indicating that there are 
+	# conflicts, exit.
+	if [ -s "${conflicts}" ]; then
+		die "Conflicts found with another package."
+	fi
+}
+
+# Install a built package tarball.
+pkg_install() {
+	tar_file="${pkg_bin_dir}/${pkg_name}-${pkg_version}.tar.${compress_method}"
+	manifest_file="${pkg_ext_dir}/${pkg_ins_dir}/${pkg_name}/manifest"
+
+	# Check if it has been built already.
+	pkg_cache || die "Not built yet."
+
+	# Decompress the tarball.
+	cd "${pkg_ext_dir}"
+	tar xf "${tar_file}"
+
+	# Check if the package is valid.
+	[ -f "${manifest_file}" ] || die "Not a valid package."
+
+	# Check for file conflicts with other packages.
+	pkg_conflicts
+
+	info "Installing package..."
+
+	# If the package is already installed and this is an upgrade, make
+	# a backup of the manifest file.
+	tmp_file_copy "manifest-copy" "${sys_ins_dir}/${pkg_name}/manifest"; manifest_copy="${tmp_file}"
+	tmp_file      "manifest-diff"; manifest_diff="${tmp_file}"
+
+	# Generate a list of files which exist in the currently installed manifest
+	# but not in the new (to be installed) manifest.
+	grep -vFxf "${manifest_file}" "${manifest_copy}" > "${tmp_file}" 2> /dev/null || :
+
+	# Reverse the manifest file so that the directories are
+	# created going down the tree.
+	tmp_file manifest-reverse
+	sort "${manifest_file}" > "${manifest_diff}"
+
+	# Block the user from exiting the package manager during
+	# the installation to avoid an incomplete package being
+	# installed.
+	trap '' INT
+
+	# Install the package's files.
+	if
+		# Install the package's files by iterating over its manifest.
+		pkg_install_files "${PWD}" "-z" < "${manifest_diff}" &&
+
+		# Remove any old files.
+		pkg_remove_files < "${manifest_copy}" &&
+
+		# Install the package a second time to fix any mess caused by the
+		# removal of outdated files.
+		pkg_install_files "${PWD}" "-e" < "${manifest_diff}"
+	then
+		# Reset 'trap'. We don't need to block '^C' anymore.
+		trap pkg_clean EXIT INT
+
+		info "Installed successfully."
+	else
+		pkg_clean
+
+		err "Failed to install package."
+		die "The filesystem is now dirty, manual intervention is required."
+	fi
+}
+
+# Remove a package.
+pkg_remove() {
+	pkg_installed "${pkg_name}" || die "Package not installed."
+
+	# Block the user from exiting the package manager during
+	# the removal to avoid an incomplete package being left
+	# on the filesystem.
+	trap '' INT
+
+	info "Removing package..."
+
+	# Remove the package.
+	pkg_remove_files < "${sys_ins_dir}/${pkg_name}/manifest"
+
+	# Reset 'trap'. We don't need to block '^C' anymore.
+	trap pkg_clean EXIT INT
+
+	info "Removed successfully."
+}
+
+# List installed packages.
+# $1 = directory to list
+pkg_list() {
+	# Check if any package is installed.
+	is_empty "${sys_ins_dir}" && die "No packages are installed."
+
+	# Optional arguments can be passed to check for specific packages. If no
+	# arguments are passed, list all.
+	ok "$1" || { set +f; set -f -- "${sys_ins_dir}"/*; }
+	ok "$1"
+
+	for pkg do
+		pkg_name="${pkg##*/}"
+		pkg_dir="${sys_ins_dir}/${pkg_name}"
+		
+		# Print the name and version of the package.
+		pkg_get_version
+		info "${pkg_name} - ${pkg_version}"
+	done
+}
+
+# Update a Git repository.
+# $1 = repository path
+repo_update_git() {
+	git pull
+	git submodule update --remote --init --force
+}
+
+# Update a specific repository
+# $1 = repository path
+repo_update_repo() {
+	cd "$1" || die "Repository '$1' is not accessible."
+
+	info "Updating repository '$1'..."
+
+	case ${repo_type} in
+		git)
+			repo_update_git "$@"
+		;;
+
+		*)
+			info "Not a Git repository."
+		;;
+	esac
+}
+
+# Update the repositories.
+repo_update() {
+	# Create a list of all repositories.
+	# Intentional.
+	# shellcheck disable=2086
+	{ IFS=:; set -- ${SLASH_PATH}; unset IFS; }
+
+	for repo do
+		if git -C "${repo}" remote > /dev/null 2>&1; then
+			repo_type="git"
+
+			# Get the root directory of the repository.
+			root_dir="$(git -C "${repo}" rev-parse --show-toplevel)"
+		else
+			unset repo_type
+		fi
+
+		repo_update_repo "${root_dir:-${repo}}"
+	done
+}
+
+
+# Parse command arguments.
+args() {
+	# We can easily figure out what action the user specified
+	# because it will always be the first argument.
+	action=$1
+
+	# Remove the action from the arguments, if it has been specified.
+	shift "$(($# != 0))"
+
+	# Package information
+	case ${action} in
+		d|download|b|build|i|install|r|remove)
+			null "$1" && die "Specify a package name."
+
+			pkg_find "$@" 1
+			pkg_is_package "${pkg_dir}" || die "'${pkg_name}' is not a valid package."
+		;;
+	esac
+
+	case ${action} in
+		v|version)
+			info "${SLASH_VERSION}"
+		;;
+
+		u|update)
+			repo_update
+		;;
+
+		d|download)
+			pkg_sources
+		;;
+
+		b|build)
+			# Prompt the user if they want to build an already installed package again.
+			pkg_installed "${pkg_name}" && prompt "Package is already installed, do you still want to build it?"
+
+			# Download and extract the sources.
+			pkg_sources
+			[ -f "${pkg_dir}/sources" ] && pkg_extract
+
+			# Build the package.
+			pkg_build
+
+			# Create a manifest for the package.
+			pkg_manifest
+
+			# Create a tarball from the package's files.
+			pkg_tar
+
+			# Ask the user if they want to install the package.
+			prompt "Do you want to install the package?"
+			pkg_install
+		;;
+
+		i|install)
+			# Prompt the user if they want to build an already installed package again.
+			pkg_installed "${pkg_name}" && prompt "Package is already installed, do you still want to install it?"
+			pkg_install
+		;;
+
+		r|remove)
+			pkg_remove
+		;;
+
+		s|search)
+			pkg_find "$@"
+		;;
+
+		l|list)
+			pkg_list "$@"
+		;;
+
+		"")
+			info "slash [v|d|b|i|r|s|l]"
+			info "version   =>  View the current version."
+			info "update    =>  Update the repositories."
+			info "download  =>  Download the package's sources."
+			info "build     =>  Build the package."
+			info "install   =>  Install a built package."
+			info "remove    =>  Remove an installed package."
+			info "search    =>  Search for a package."
+			info "list      =>  List installed packages."
+		;;
+
+		*)
+			err "'${action}' is not a valid action."
+	esac
+}
+
+# Create the temporary directories used for building.
+create_tmp_dirs() {
+	SLASH_ROOT=${SLASH_ROOT%"${SLASH_ROOT##*[!/]}"}
+
+	# This automatically creates the root and will do
+	# nothing on a normal system.
+	mkdir -p "${SLASH_ROOT}/" 2> /dev/null || :
+
+	# Database
+	sys_db_dir="${SLASH_ROOT}/${pkg_db_dir:=var/db/slash}"
+	sys_ins_dir="${SLASH_ROOT}/${pkg_ins_dir:=var/db/slash/installed}"
+
+	# Persistent data
+	pkg_src_dir="${sys_db_dir}/sources"
+	pkg_bin_dir="${sys_db_dir}/bin"
+	pkg_log_dir="${sys_db_dir}/logs/${time}"
+
+	# Cache
+	pkg_cache_dir="${SLASH_ROOT}/var/tmp/slash"
+	pkg_cache_dir="${pkg_cache_dir}/${pid}"
+
+	# Build directories
+	pkg_build_dir="${pkg_cache_dir}/build"
+	pkg_root_dir="${pkg_cache_dir}/root"
+	pkg_ext_dir="${pkg_cache_dir}/extract"
+	pkg_tmp_dir="${pkg_cache_dir}/tmp"
+
+	# Create the directories.
+	mkdir -p "${sys_db_dir}" "${sys_ins_dir}" "${pkg_src_dir}" "${pkg_bin_dir}" \
+			 "${pkg_log_dir}" "${pkg_build_dir}" "${pkg_root_dir}" \
+			 "${pkg_ext_dir}" "${pkg_tmp_dir}" || die "Failed to create temporary directories."
+}
+
+main() {
+	# Disable globbing and enable exit-on-error.
+	set -ef
+
+	cmd_get="${SLASH_GET:-curl}"
+	compress_method="${SLASH_COMPRESS:-gz}"
+
+	# Store the date and time of script execution to be used for log files.
+	time="$(date +%Y-%m-%d-%H-%M)"
+
+	# Store the PID for later use.
+	pid="$$"
+
+	# Create the temporary directories.
+	create_tmp_dirs
+
+	# Run the clean() function when the user exits the program.
+	trap pkg_clean EXIT INT
+
+	# Validate SLASH_PATH.
+	pkg_path
+
+	# Parse command arguments.
+	args "$@"
+}
+
+# Run the program.
+main "$@"
