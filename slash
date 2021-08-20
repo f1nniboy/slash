@@ -152,6 +152,7 @@ file_rwx() {
 }
 
 # Run all hooks in SLASH_HOOK.
+# $1 = hook name
 # $@ = arguments to the hook
 run_hook() {
 	IFS=:
@@ -161,6 +162,26 @@ run_hook() {
 	done
 
 	unset IFS
+}
+
+# Run a hook located in the package directory.
+# $1 = hook name
+# $2 = package name
+run_package_hook() {
+	_pkg_dir="${pkg_dir}"
+	_pkg_name="${pkg_name}"
+
+	pkg_find "$2" 1
+
+	if [ -x "${pkg_dir}/$1" ]; then
+		info "Running package hook '$1'..."
+		"${pkg_dir}/$1" "$@" || die "Failed to run package hook '$1'."
+	elif [ -f "${pkg_dir}/$1" ]; then
+		warn "Skipping package hook '$1', not executable."
+	fi
+
+	pkg_dir="${_pkg_dir}"
+	pkg_name="${_pkg_name}"
 }
 
 
@@ -207,7 +228,7 @@ pkg_get_version() {
 		die "Failed to read version file for '${pkg_name}'."
 }
 
-# Get the major, minor, patch and ident versions of a package.
+# Get the major, minor, patch and ident version parts of a package.
 pkg_get_version_split() {
 	pkg_get_version
 
@@ -443,12 +464,12 @@ pkg_strip() {
 		case ${file} in
 			# Dynamic libraries
 			/usr/lib/*.so.*)
-				strip -g -R .comment -R .note "${pkg_root_dir}${file}"
+				strip -g -R .comment -R .note "${pkg_root_dir}${file}" || :
 			;;
 
 			# Static libraries
-			/usr/lib/*[!.so].*)
-				strip -s -R .comment -R .note "${pkg_root_dir}${file}"
+			/usr/lib/*.?)
+				strip -s -R .comment -R .note "${pkg_root_dir}${file}" || :
 			;;
 		esac
 	done < "${pkg_root_dir}/${pkg_ins_dir}/${pkg_name}/manifest"
@@ -766,7 +787,8 @@ pkg_install() {
 		trap pkg_clean EXIT INT
 
 		# $1 = package name
-		run_hook "post-install" "${pkg_name}"
+		run_hook         "post-install" "${pkg_name}"
+		run_package_hook "post-install" "${pkg_name}"
 
 		info "Installed successfully."
 	else
