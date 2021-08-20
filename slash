@@ -508,9 +508,6 @@ pkg_build_all() {
 		# Get information about the package.
 		pkg_find "${pkg}" 1
 
-		# Prompt the user if they want to build an already installed package again.
-		pkg_installed "${pkg_name}" && prompt "Package is already installed, do you still want to build it?"
-
 		# Download and extract the sources.
 		pkg_sources
 		[ -f "${pkg_dir}/sources" ] && pkg_extract
@@ -822,6 +819,36 @@ pkg_remove() {
 	info "Removed successfully."
 }
 
+# Check for new package versions and upgrade them if necessary.
+pkg_upgrade() {
+	info "Checking for new package versions..."
+
+	set +f; for pkg in "${sys_ins_dir}"/*; do set -f
+		pkg_dir="${pkg}"
+		pkg_name="${pkg##*/}"
+
+		pkg_get_version; ins_ver="${pkg_version}"
+		pkg_find "${pkg_name}" 1; pkg_get_version; pkg_ver="${pkg_version}"
+
+		# Compare the versions.
+		equals "${ins_ver}-${pkg_ver}" "${pkg_ver}-${ins_ver}" || {
+			set -- "$@" "${pkg_name}"
+			info "${pkg_name} - ${ins_ver} => ${pkg_ver}"
+		}
+	done
+
+	# Update the packages.
+	for pkg do
+		info "Packages to update: $*"
+		prompt
+
+		pkg_build_all "$@"
+		info "Updated all packages."
+	done
+
+	equals "$#" 0 && info "Nothing to do."
+}
+
 # List installed packages.
 # $1 = directory to list
 pkg_list() {
@@ -831,7 +858,6 @@ pkg_list() {
 	# Optional arguments can be passed to check for specific packages. If no
 	# arguments are passed, list all.
 	ok "$1" || { set +f; set -f -- "${sys_ins_dir}"/*; }
-	ok "$1"
 
 	for pkg do
 		pkg_name="${pkg##*/}"
@@ -922,6 +948,7 @@ args() {
 
 		u|update)
 			repo_update
+			pkg_upgrade
 		;;
 
 		d|download)
@@ -933,8 +960,6 @@ args() {
 		;;
 
 		i|install)
-			# Prompt the user if they want to build an already installed package again.
-			pkg_installed "${pkg_name}" && prompt "Package is already installed, do you still want to install it?"
 			pkg_install
 		;;
 
