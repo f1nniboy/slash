@@ -828,19 +828,22 @@ pkg_remove() {
 pkg_upgrade() {
 	info "Checking for new package versions..."
 
-	set +f; for pkg in "${sys_ins_dir}"/*; do set -f
-		pkg_dir="${pkg}"
-		pkg_name="${pkg##*/}"
+	# Only run this if packages are installed.
+	is_empty "${sys_ins_dir}" || {
+		set +f; for pkg in "${sys_ins_dir}"/*; do set -f
+			pkg_dir="${pkg}"
+			pkg_name="${pkg##*/}"
 
-		pkg_get_version; ins_ver="${pkg_version}"
-		pkg_find "${pkg_name}" 1; pkg_get_version; pkg_ver="${pkg_version}"
+			pkg_get_version; ins_ver="${pkg_version}"
+			pkg_find "${pkg_name}" 1; pkg_get_version; pkg_ver="${pkg_version}"
 
-		# Compare the versions.
-		equals "${ins_ver}-${pkg_ver}" "${pkg_ver}-${ins_ver}" || {
-			set -- "$@" "${pkg_name}"
-			info "${pkg_name} - ${ins_ver} => ${pkg_ver}"
-		}
-	done
+			# Compare the versions.
+			equals "${ins_ver}-${pkg_ver}" "${pkg_ver}-${ins_ver}" || {
+				set -- "$@" "${pkg_name}"
+				info "${pkg_name} - ${ins_ver} => ${pkg_ver}"
+			}
+		done
+	}
 
 	# Update the packages.
 	for pkg do
@@ -886,23 +889,29 @@ repo_update_git() {
 repo_update_repo() {
 	cd "$1" || die "Repository '$1' is not accessible."
 
-	info "Updating repository '$1'..."
+	# Only update the repository if it hasn't been updated yet.
+	# This is to avoid pulling a Git repository multiple times.
+	contains "${repos}" "${PWD}" || {
+		repos="${repos} ${PWD}"
 
-	# $1 = path to repository
-	run_hook "pre-update" "${PWD}"
+		info "Updating repository '$1'..."
 
-	case ${repo_type} in
-		git)
-			repo_update_git "$@"
-		;;
+		# $1 = path to repository
+		run_hook "pre-update" "${PWD}"
 
-		*)
-			info "Not a Git repository."
-		;;
-	esac
+		case ${repo_type} in
+			git)
+				repo_update_git "$@"
+			;;
 
-	# $1 = path to repository
-	run_hook "post-update" "${PWD}"
+			*)
+				info "Not a Git repository."
+			;;
+		esac
+
+		# $1 = path to repository
+		run_hook "post-update" "${PWD}"
+	}
 }
 
 # Update the repositories.
@@ -938,7 +947,7 @@ args() {
 
 	# Package information
 	case ${action} in
-		d|download|b|build|i|install|r|remove)
+		d|download|i|install|r|remove)
 			null "$1" && die "Specify a package name."
 
 			pkg_find "$@" 1
