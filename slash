@@ -201,10 +201,11 @@ equals "${NO_COLOR}" 1 || {
 # Package functions
 
 # Clean all the files and directories we created.
+# $1 = force
 pkg_clean() {
 	# Only remove the temporary directory if the
 	# debug mode isn't enabled.
-	null "${SLASH_DEBUG}" && rm -rf "${pkg_cache_dir}"
+	equals "$1" 1 || null "${SLASH_DEBUG}" && rm -rf "${pkg_cache_dir}"
 }
 
 # Validate SLASH_PATH.
@@ -523,6 +524,10 @@ pkg_build_all() {
 
 		# Create a tarball from the package's files.
 		pkg_tar
+
+		# Clean the folders to make space for the next package.
+		pkg_clean 1
+		create_tmp_dirs
 
 		# Ask the user if they want to install the package.
 		prompt "Do you want to install the package?"
