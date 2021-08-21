@@ -184,6 +184,20 @@ run_package_hook() {
 	pkg_name="${_pkg_name}"
 }
 
+# Decompress an archive.
+# $1 = path to compressed archive
+decompress() {
+	case $1 in
+		*.tbz|*.bz2) bzip2 -d ;;
+		*.lzma)      lzma -dc ;;
+		*.lz)        lzip -dc ;;
+		*.tar)       cat      ;;
+		*.tgz|*.gz)  gzip -d  ;;
+		*.xz|*.txz)  xz -dcT0 ;;
+		*.zst)       zstd -dc ;;
+    esac < "$1"
+}
+
 
 # Colors
 
@@ -419,7 +433,10 @@ pkg_source_get() {
 # Extract a tar archive.
 # $1 = path to file
 pkg_extract_tar() {
-	tar xf "$1" --strip-components 1
+	tmp_file "tarball"
+
+	decompress "$1" > "${tmp_file}" || die "Failed to decompress '$1'."
+	tar xf "${tmp_file}" --strip-components 1 || die "Failed to extract '$1'."
 }
 
 # Extract the sources of a package.
@@ -469,7 +486,7 @@ pkg_strip() {
 			;;
 
 			# Static libraries
-			/usr/lib/*.?)
+			/usr/lib/*.?$)
 				strip -s -R .comment -R .note "${pkg_root_dir}${file}" || :
 			;;
 		esac
@@ -503,11 +520,33 @@ pkg_manifest() {
 	done < "${tmp_file}" > "${manifest_file}"
 }
 
+# Resolve the dependencies of a package.
+pkg_depends() {
+	# Only resolve dependencies if the package
+	# has dependencies.
+	[ -f "${pkg_dir}/depends" ] || return 0
+
+	# Loop through the dependencies.
+	while read -r dep dep_type; do
+		# Check if the dependency is installed.
+		pkg_installed "$dep" || {
+			err "A required dependency for '${pkg_name}' is not installed:"
+			die "${dep}"
+		}
+	done < "${pkg_dir}/depends"
+}
+
 # Build all the packages.
 pkg_build_all() {
 	for pkg do
 		# Get information about the package.
 		pkg_find "${pkg}" 1
+
+		# Check if the package is actually valid.
+		pkg_is_package "${pkg_dir}" || die "'${pkg_name}' is not a valid package."
+
+		# Resolve the dependencies.
+		pkg_depends
 
 		# Download and extract the sources.
 		pkg_sources
@@ -635,9 +674,18 @@ pkg_install_files() {
 	while read -r file; do
 		dest_file=${SLASH_ROOT:+"${SLASH_ROOT}"}${file%%/}
 		ext_file="${pkg_ext_dir}${file%%/}"
+		should_install=1
+
+		# Only install files in /etc if they don't exist in
+		# the destination yet.
+		case ${file} in /etc/?*)
+			[ -e "${dest_file}" ] && should_install=0
+		esac
 
 		case ${file} in
 			*/)
+				equals "${should_install}" 1 || continue
+
 				[ -d "${dest_file}" ] || {
 					file_rwx "$1/${file#/}"
 					mkdir -m "${oct}" "${dest_file}"
@@ -646,7 +694,8 @@ pkg_install_files() {
 
 			*)
 				# Skip directories and files which exist in verify mode.
-				[ -d "${ext_file}" ] || ! test "$2" "${dest_file}" ||
+				[ -d "${ext_file}" ] || ! test "$2" "${dest_file}" \
+				|| ! equals "${should_install}" 1 ||
 					continue
 
 				# Symlinks
@@ -655,6 +704,10 @@ pkg_install_files() {
 
 				# Regular files
 				else
+					case ${file} in /etc/?*)
+						[ -e "${dest_file}" ] && continue
+					esac
+
 					cp -fP "$1${file}" "${dest_file}"
 				fi
 			;;
