@@ -157,6 +157,7 @@ file_rwx() {
 run_hook() {
 	IFS=:
 
+	# shellcheck disable=2153
 	for hook in ${SLASH_HOOK}; do
 		"${hook}" "$@" || die "Failed to run hook '${hook}'."
 	done
@@ -370,7 +371,6 @@ pkg_sources() {
 		case ${url} in
 			git+*)
 				mkcd "${source_file}"
-				echo $url
 				pkg_source_git "${url##git+}"
 			;;
 
@@ -495,7 +495,7 @@ pkg_strip() {
 
 # Generate the manifest for a package.
 pkg_manifest() {
-	info "Creating manifest..."
+	info "Creating manifest for '${pkg_name}'..."
 
 	manifest_file="${pkg_root_dir}/${pkg_ins_dir}/${pkg_name}/manifest"
 	
@@ -527,7 +527,7 @@ pkg_depends() {
 	[ -f "${pkg_dir}/depends" ] || return 0
 
 	# Loop through the dependencies.
-	while read -r dep dep_type; do
+	while read -r dep _; do
 		# Check if the dependency is installed.
 		pkg_installed "$dep" || {
 			err "A required dependency for '${pkg_name}' is not installed:"
@@ -579,7 +579,7 @@ pkg_build() {
 	# Get the package's version.
 	pkg_get_version "${pkg_dir}"
 
-	info "Starting build..."
+	info "Starting build for '${pkg_name}'..."
 
 	# $1 = package name
 	# $2 = path to build directory
@@ -601,7 +601,7 @@ pkg_build() {
 		DESTDIR="${pkg_root_dir}" \
 		\
 		"${pkg_dir}/build" "${pkg_root_dir}" 2>&1 || {
-			err "Build failed."
+			err "Build for '${pkg_name}' failed."
 			err "Log saved to '${log_file}'."
 
 			# $1 = package name
@@ -624,7 +624,7 @@ pkg_build() {
 	# $2 = path to root directory
 	run_hook "post-build" "${pkg_name}" "${pkg_root_dir}"
 
-	info "Successfully built."
+	info "Successfully built '${pkg_name}'."
 }
 
 # Find the tarball of a built package.
@@ -664,7 +664,7 @@ pkg_tar() {
 	# $2 = path to archive
 	run_hook "post-package" "${pkg_name}" "${tar_file}"
 
-	info "Created tarball."
+	info "Created tarball for '${pkg_name}'."
 }
 
 # Copy files and create directories.
@@ -779,7 +779,16 @@ pkg_conflicts() {
 	# If the file is not empty, indicating that there are 
 	# conflicts, exit.
 	if [ -s "${conflicts}" ]; then
-		die "Conflicts found with another package."
+		err "Conflicts found with another package:"
+		IFS=:
+
+		# Print the conflicts.
+		while read -r manifest conflict; do
+			err "${conflict}"
+		done < "${conflicts}"
+
+		unset IFS
+		die
 	fi
 }
 
@@ -805,7 +814,7 @@ pkg_install() {
 	# $2 = path to extracted package
 	run_hook "pre-install" "${pkg_name}" "${PWD}"
 
-	info "Installing package..."
+	info "Installing '${pkg_name}'..."
 
 	# If the package is already installed and this is an upgrade, make
 	# a backup of the manifest file.
@@ -845,11 +854,11 @@ pkg_install() {
 		run_hook         "post-install" "${pkg_name}"
 		run_package_hook "post-install" "${pkg_name}"
 
-		info "Installed successfully."
+		info "Installed '${pkg_name}' successfully."
 	else
 		pkg_clean
 
-		err "Failed to install package."
+		err "Failed to install '${pkg_name}'."
 		die "The filesystem is now dirty, manual intervention is required."
 	fi
 }
@@ -863,7 +872,7 @@ pkg_remove() {
 	# on the filesystem.
 	trap '' INT
 
-	info "Removing package..."
+	info "Removing '${pkg_name}'..."
 
 	# $1 = package name
 	run_hook "pre-remove" "${pkg_name}"
@@ -874,7 +883,7 @@ pkg_remove() {
 	# Reset 'trap'. We don't need to block '^C' anymore.
 	trap pkg_clean EXIT INT
 
-	info "Removed successfully."
+	info "Removed '${pkg_name}' successfully."
 }
 
 # Check for new package versions and upgrade them if necessary.
@@ -998,16 +1007,6 @@ args() {
 	# Remove the action from the arguments, if it has been specified.
 	shift "$(($# != 0))"
 
-	# Package information
-	case ${action} in
-		d|download|i|install|r|remove)
-			null "$1" && die "Specify a package name."
-
-			pkg_find "$@" 1
-			pkg_is_package "${pkg_dir}" || die "'${pkg_name}' is not a valid package."
-		;;
-	esac
-
 	case ${action} in
 		v|version)
 			info "${SLASH_VERSION}"
@@ -1019,7 +1018,10 @@ args() {
 		;;
 
 		d|download)
-			pkg_sources
+			for pkg do
+				pkg_find "${pkg}" 1
+				pkg_sources
+			done
 		;;
 
 		b|build)
@@ -1027,11 +1029,17 @@ args() {
 		;;
 
 		i|install)
-			pkg_install
+			for pkg do
+				pkg_find "${pkg}" 1
+				pkg_install "${pkg}"
+			done
 		;;
 
 		r|remove)
-			pkg_remove
+			for pkg do
+				pkg_find "${pkg}" 1
+				pkg_remove
+			done
 		;;
 
 		s|search)
@@ -1046,8 +1054,8 @@ args() {
 			info "slash [v|d|b|i|r|s|l]"
 			info "version   =>  View the current version."
 			info "update    =>  Update the repositories."
-			info "download  =>  Download the package's sources."
-			info "build     =>  Build the package."
+			info "download  =>  Download a the sources of a package."
+			info "build     =>  Build a package."
 			info "install   =>  Install a built package."
 			info "remove    =>  Remove an installed package."
 			info "search    =>  Search for a package."
