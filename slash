@@ -221,7 +221,7 @@ equals "${NO_COLOR}" 1 || {
 pkg_clean() {
 	# Only remove the temporary directory if the
 	# debug mode isn't enabled.
-	equals "$1" 1 || null "${SLASH_DEBUG}" && rm -rf "${pkg_cache_dir}"
+	equals "$1" 1 || null "${SLASH_DEBUG}" && rm -rf "${pkg_cache_dir}" || :
 }
 
 # Validate SLASH_PATH.
@@ -621,7 +621,7 @@ pkg_build_all() {
 		# Create a tarball from the package's files.
 		pkg_tar
 
-		# Clean the folders to make space for the next package.
+		# Clean the directories to make space for the next package.
 		pkg_clean 1
 		create_tmp_dirs
 
@@ -669,7 +669,7 @@ pkg_build() {
 
 			# $1 = package name
 			# $2 = path to build directory
-			(run_hook "build-fail" "${pkg_name}" "${pkg_build_dir}")
+			(run_hook "build-fail" "${pkg_name}" "${pkg_build_dir}") || :
 
 			# Clean up.
 			pkg_clean
