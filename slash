@@ -226,8 +226,6 @@ pkg_clean() {
 
 # Validate SLASH_PATH.
 pkg_path() {
-	null "${SLASH_PATH}" && die "SLASH_PATH is not set."
-
 	IFS=:
 
 	for path in ${SLASH_PATH}; do
