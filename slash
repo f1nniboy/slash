@@ -521,32 +521,92 @@ pkg_manifest() {
 }
 
 # Resolve the dependencies of a package.
+# $1 = current dependency
+# $2 = current dependency type
+# $3 = explicit?
+# $4 = filter?
+# $5 = list of found dependencies (not filtered)
 pkg_depends() {
-	# Only resolve dependencies if the package
-	# has dependencies.
-	[ -f "${pkg_dir}/depends" ] || return 0
+	! contains "${deps}" "$1" || return 0
+
+	# Filter out all dependencies and already installed packages.
+	null "$4" || ok "$3" || contains "${explicit_pkg}" "$1" ||
+		! pkg_installed "$1" || return 0
+
+	# Detect circular dependencies and bail out.
+	# Looks for multiple repeating patterns of a dependency.
+	case " $5 " in *" ${5##*} "*" $5 "*)
+		err "Circular dependency detected."
+		die "$1 <> ${5##* }"
+	esac
+
+	# Get information about the package and check if it has dependencies.
+	! _pkg_find "$1" 1 || ! [ -f "${pkg_dir}/depends" ] ||
 
 	# Loop through the dependencies.
-	while read -r dep _; do
-		# Check if the dependency is installed.
-		pkg_installed "$dep" || {
-			err "A required dependency for '${pkg_name}' is not installed:"
-			die "${dep}"
-		}
+	while read -r dep dep_type || ok "${dep}"; do
+		pkg_depends "${dep}" "${dep_type}" "" "$4" "$5 $1"
 	done < "${pkg_dir}/depends"
+
+	# Add the package to the dependency list.
+	if ! equals "$3" "explicit" || { equals "$2" "make" && ! pkg_cache "$1"; }; then
+		deps="${deps} $1"
+	fi
 }
 
 # Build all the packages.
 pkg_build_all() {
+	equals "$#" "0" && return 0
+
+	for pkg do
+		pkg_find "${pkg}" 1
+
+		pkg_depends "${pkg}" "" "explicit" "filter"
+		explicit_pkg="${explicit_pkg} ${pkg} "
+	done
+
+	set --
+
+	# If an explicit package is a dependency of another explicit package,
+	# remove it from the explicit package list.
+	for pkg in ${explicit_pkg}; do
+		contains "${deps}" "${pkg}" || set -- "$@" "${pkg}"
+	done
+
+	explicit_pkg_count="$#"
+	explicit_pkg=$*
+
+	info "Building: explicit: $*${deps:+, dependencies: ${deps## }}"
+
+	# Intentional.
+	# shellcheck disable=2046,2086
+	set -- ${deps} "$@"
+
+	# Prompt the user if extra packages need to be built.
+	equals "$#" "${explicit_pkg_count}" || prompt
+
+	# Check for pre-built dependencies.
+	for pkg in ${deps}; do
+		if pkg_cache "${pkg}"; then
+			info "Found pre-built binary for dependency '${pkg}'."
+
+			pkg_find "${pkg}" 1
+			pkg_install "${pkg}"
+		else
+			set -- "$@" "${pkg}"
+		fi
+
+		shift
+	done
+
+	echo $deps
+
 	for pkg do
 		# Get information about the package.
 		pkg_find "${pkg}" 1
 
 		# Check if the package is actually valid.
 		pkg_is_package "${pkg_dir}" || die "'${pkg_name}' is not a valid package."
-
-		# Resolve the dependencies.
-		pkg_depends
 
 		# Download and extract the sources.
 		pkg_sources
@@ -568,9 +628,15 @@ pkg_build_all() {
 		pkg_clean 1
 		create_tmp_dirs
 
-		# Ask the user if they want to install the package.
-		prompt "Do you want to install the package?"
-		pkg_install
+		if ! contains "${explicit_pkg}" "${pkg}"; then
+			info "'${pkg}' is needed as a dependency, installing..."
+			pkg_install "${pkg}"
+		fi
+	done
+
+	for pkg in ${explicit_pkg}; do
+		info "Do you want to install the built packages? [${explicit_pkg}]"
+		prompt && pkg_install "${pkg}"
 	done
 }
 
@@ -863,6 +929,23 @@ pkg_install() {
 	fi
 }
 
+# Check if a package is removable.
+# $1 = package to check
+pkg_removable() {
+	info "Checking if '$1' is removable..."
+
+	# Change into the directory to get a cleaner "grep" output.
+	# /var/tmp/root/var/db/slash/installed/llvm/depends -> llvm/depends
+	cd "${sys_ins_dir}"
+	set +f
+
+	grep -lFx -- "$1" */depends &&
+		die "Cannot remove '$1', has dependents."
+
+	set -f
+	cd "${OLDPWD}"
+}
+
 # Remove a package.
 pkg_remove() {
 	pkg_installed "${pkg_name}" || die "Package not installed."
@@ -871,6 +954,9 @@ pkg_remove() {
 	# the removal to avoid an incomplete package being left
 	# on the filesystem.
 	trap '' INT
+
+	# Check if the package is removable.
+	pkg_removable "${pkg_name}"
 
 	info "Removing '${pkg_name}'..."
 
