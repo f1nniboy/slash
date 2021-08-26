@@ -463,6 +463,7 @@ pkg_extract() {
 			;;
 
 			*.tar|*.tar.??|*.tar.???|*.tar.????|*.t?z)
+				cd "${dest_file}"
 				pkg_extract_tar "${source_file}"
 			;;
 
@@ -709,7 +710,7 @@ pkg_tar() {
 	# portable across implementations.
 	cd "${pkg_root_dir}"
 
-	tar cf - . | case $compress_method in
+	tar cf - . | case ${compress_method} in
 		bz2)  bzip2 -z ;;
 		gz)   gzip -6  ;;
 		lzma) lzma -z  ;;
@@ -928,7 +929,7 @@ pkg_removable() {
 	info "Checking if '$1' is removable..."
 
 	# Change into the directory to get a cleaner "grep" output.
-	# /var/tmp/root/var/db/slash/installed/llvm/depends -> llvm/depends
+	# /var/db/slash/installed/llvm/depends -> llvm/depends
 	cd "${sys_ins_dir}"
 
 	grep -lFx -- "$1" */depends &&
