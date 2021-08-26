@@ -9,8 +9,6 @@ List of missing features, compared to KISS. Some were left out on purpose.
 
 * Alternatives system
 
-* Advanced dependency resolution
-
 * Checksums
 
 ## Installation

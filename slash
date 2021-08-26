@@ -1,11 +1,11 @@
-#!/bin/sh
+#!/bin/sh -e
 # shellcheck disable=2120
 
 # A simple package manager.
 
 
 # Constants
-SLASH_VERSION="0.0.1"
+SLASH_VERSION="0.2"
 
 
 # Utilities
@@ -221,6 +221,8 @@ equals "${NO_COLOR}" 1 || {
 pkg_clean() {
 	# Only remove the temporary directory if the
 	# debug mode isn't enabled.
+	#
+	# shellcheck disable=2015
 	equals "$1" 1 || null "${SLASH_DEBUG}" && rm -rf "${pkg_cache_dir}" || :
 }
 
@@ -268,11 +270,11 @@ _pkg_find() {
 	IFS=:
 
 	# Search for packages. */
-	set +f; for path in ${SLASH_PATH} "${sys_ins_dir}"; do
+	for path in ${SLASH_PATH} "${sys_ins_dir}"; do
 		# Do not quote the argument to allow multiple packages
 		# as arguments.
 		for pkg_path in "${path}"/$1; do
-			test -d "${pkg_path}" && set -f -- "$@" "${pkg_path}"
+			test -d "${pkg_path}" && set -- "$@" "${pkg_path}"
 		done
 	done
 
@@ -312,7 +314,7 @@ pkg_installed() {
 # $1 = source
 # $2 = destination
 pkg_source_resolve() {
-	unset source_file file_name url
+	unset url source_file file_name url
 
     fnr "${1%"${1##*[!/]}"}" \
         \\VERSION \  VERSION "${pkg_version}"         \  VERSION \
@@ -323,6 +325,7 @@ pkg_source_resolve() {
         \\PACKAGE \  PACKAGE "${pkg_name}"            \  PACKAGE
 
 	set -- "${fnr_result}" "$2"
+	dest_file="${pkg_build_dir}/$2"
 
 	# Git repository
 	if null "${1##git+*}"; then
@@ -334,7 +337,6 @@ pkg_source_resolve() {
 		url="url+$1"
 		file_name="${url##*/}"
 		source_file="${pkg_src_dir}/${pkg_name}/${file_name}"
-		dest_file="${pkg_build_dir}/$2"
 
 	# Local relative file
 	elif [ -f "${pkg_dir}/$1" ]; then
@@ -448,22 +450,24 @@ pkg_extract() {
 
 	while read -r src dest || ok "${src}"; do
 		pkg_source_resolve "${src}" "${dest}"
-		mkcd "${pkg_build_dir}"
+		cd "${pkg_build_dir}"
+
+		# Set the destination to the build directory if it isn't
+		# set and create the destination path.
+		null "${dest_file}" && dest_file="${pkg_build_dir}"
+		mkdir -p "${dest_file}" || die "Failed to create '${dest_file}'."
 
 		case ${url} in
 			git+*)
-				set +f
-				cp -Rf "${source_file}"/* .
-				set -f
+				cp -Rf "${source_file}"/* "${dest_file}"
 			;;
 
 			*.tar|*.tar.??|*.tar.???|*.tar.????|*.t?z)
-				ok "${dest_file}" && mkcd "${dest_file}"
 				pkg_extract_tar "${source_file}"
 			;;
 
 			*?*)
-				cp -Rf "${source_file}" .
+				cp -LRf "${source_file}" "${dest_file}"
 				info "Copied '${source_file}'."
 			;;
 		esac
@@ -478,15 +482,9 @@ pkg_strip() {
 	info "Stripping binaries and libraries of '${pkg_name}'..."
 
 	while read -r file; do
-		case ${file} in
-			# Dynamic libraries
-			/usr/lib/*.so.*)
+		# Only strip dynamic libraries.
+		case ${file} in /usr/lib/*.so.*)
 				strip -g -R .comment -R .note "${pkg_root_dir}${file}" || :
-			;;
-
-			# Static libraries
-			/usr/lib/*.?$)
-				strip -s -R .comment -R .note "${pkg_root_dir}${file}" || :
 			;;
 		esac
 	done < "${pkg_root_dir}/${pkg_ins_dir}/${pkg_name}/manifest"
@@ -524,7 +522,7 @@ pkg_manifest() {
 # $2 = current dependency type
 # $3 = explicit?
 # $4 = filter?
-# $5 = list of found dependencies (not filtered)
+# $5 = list of packages that were already looped through
 pkg_depends() {
 	! contains "${deps}" "$1" || return 0
 
@@ -586,10 +584,10 @@ pkg_build_all() {
 
 	# Check for pre-built dependencies.
 	for pkg in ${deps}; do
+		pkg_find "${pkg}" 1
+
 		if pkg_cache "${pkg}"; then
 			info "Found pre-built binary for dependency '${pkg}'."
-
-			pkg_find "${pkg}" 1
 			pkg_install "${pkg}"
 		else
 			set -- "${pkg}" "$@"
@@ -805,7 +803,7 @@ pkg_remove_files() {
 
 # Check for file conflicts between packages.
 pkg_conflicts() {
-	info "Checking for package conflicts..."
+	info "Checking '${pkg_name}' for file conflicts..."
 
 	tmp_file "manifest-files"; manifest_files="${tmp_file}"
 	tmp_file "conflicts"; conflicts="${tmp_file}"
@@ -816,12 +814,10 @@ pkg_conflicts() {
 		printf '%s\n' "${resolved_path}"
 	esac done < "${pkg_ext_dir}/${pkg_ins_dir}/${pkg_name}/manifest" > "${manifest_files}"
 
-	set +f
-
 	# Skip the conflict checks if no packages are installed.
 	is_empty "${sys_ins_dir}" && return 0
 
-	set +f; for manifest in "${sys_ins_dir}"/*/manifest; do set -f
+	for manifest in "${sys_ins_dir}"/*/manifest; do
 		set -- "$@" "${manifest}"
 	done
 
@@ -861,7 +857,7 @@ pkg_install() {
 	manifest_file="${pkg_ext_dir}/${pkg_ins_dir}/${pkg_name}/manifest"
 
 	# Check if it has been built already.
-	pkg_cache || die "Not built yet."
+	pkg_cache || die "'${pkg_name}' has not been built yet."
 
 	# Decompress the tarball.
 	cd "${pkg_ext_dir}"
@@ -934,12 +930,10 @@ pkg_removable() {
 	# Change into the directory to get a cleaner "grep" output.
 	# /var/tmp/root/var/db/slash/installed/llvm/depends -> llvm/depends
 	cd "${sys_ins_dir}"
-	set +f
 
 	grep -lFx -- "$1" */depends &&
 		die "Cannot remove '$1', has dependents."
 
-	set -f
 	cd "${OLDPWD}"
 }
 
@@ -975,7 +969,7 @@ pkg_upgrade() {
 
 	# Only run this if packages are installed.
 	is_empty "${sys_ins_dir}" || {
-		set +f; for pkg in "${sys_ins_dir}"/*; do set -f
+		for pkg in "${sys_ins_dir}"/*; do
 			pkg_dir="${pkg}"
 			pkg_name="${pkg##*/}"
 
@@ -1010,7 +1004,7 @@ pkg_list() {
 
 	# Optional arguments can be passed to check for specific packages. If no
 	# arguments are passed, list all.
-	ok "$1" || { set +f; set -f -- "${sys_ins_dir}"/*; }
+	ok "$1" || set -- "${sys_ins_dir}"/*
 
 	for pkg do
 		pkg_name="${pkg##*/}"
@@ -1085,7 +1079,7 @@ repo_update() {
 args() {
 	# We can easily figure out what action the user specified
 	# because it will always be the first argument.
-	action=$1
+	action="$1"
 
 	# Remove the action from the arguments, if it has been specified.
 	shift "$(($# != 0))"
@@ -1184,9 +1178,6 @@ create_tmp_dirs() {
 }
 
 main() {
-	# Disable globbing and enable exit-on-error.
-	set -ef
-
 	cmd_get="${SLASH_GET:-curl}"
 	compress_method="${SLASH_COMPRESS:-gz}"
 
