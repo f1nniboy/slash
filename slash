@@ -506,7 +506,7 @@ pkg_manifest() {
 	{
 		printf "%s\n" "${manifest_file}"
 
-		find "${pkg_root_dir}" ! -path "${pkg_root_dir}" -type d -exec printf "%s/\n" {} + \
+		find "${pkg_root_dir}" ! -path "${pkg_root_dir}" -type d \
 			-o \( ! -type d -a ! -name \*.la -a ! -name charset.alias \) -print
 	
     # Sort the output in reverse. Directories appear after their contents.
