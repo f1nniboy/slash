@@ -888,8 +888,8 @@ pkg_install() {
 
 	# Reverse the manifest file so that the directories are
 	# created going down the tree.
-	tmp_file manifest-reverse
-	sort "${manifest_file}" > "${manifest_diff}"
+	tmp_file "manifest-reverse"; manifest_copy="${tmp_file}"
+	sort "${manifest_file}" > "${manifest_copy}"
 
 	# Block the user from exiting the package manager during
 	# the installation to avoid an incomplete package being
@@ -899,14 +899,14 @@ pkg_install() {
 	# Install the package's files.
 	if
 		# Install the package's files by iterating over its manifest.
-		pkg_install_files "${PWD}" "-z" < "${manifest_diff}" &&
+		pkg_install_files "${PWD}" "-z" < "${manifest_copy}" &&
 
 		# Remove any old files.
-		pkg_remove_files < "${manifest_copy}" &&
+		pkg_remove_files < "${manifest_diff}" &&
 
 		# Install the package a second time to fix any mess caused by the
 		# removal of outdated files.
-		pkg_install_files "${PWD}" "-e" < "${manifest_diff}"
+		pkg_install_files "${PWD}" "-e" < "${manifest_copy}"
 	then
 		# Reset 'trap'. We don't need to block '^C' anymore.
 		trap pkg_clean EXIT INT
