@@ -543,7 +543,8 @@ pkg_depends() {
 
 	# Loop through the dependencies.
 	while read -r dep dep_type || ok "${dep}"; do
-		pkg_depends "${dep}" "${dep_type}" "" "$4" "$5 $1"
+		# Allow comments using '#'.
+		! ok "${dep##\#*}" || pkg_depends "${dep}" "${dep_type}" "" "$4" "$5 $1"
 	done < "${pkg_dir}/depends"
 
 	# Add the package to the dependency list.

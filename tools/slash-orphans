@@ -1,0 +1,8 @@
+#!/bin/sh -e
+# List orphaned packages.
+
+cd "${SLASH_ROOT}/var/db/slash/installed"
+
+for pkg in *; do
+	grep -q "^${pkg}$" ./*/depends || echo "${pkg}"
+done
