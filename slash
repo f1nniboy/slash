@@ -197,20 +197,21 @@ decompress() {
 		*.tgz|*.gz)  gzip -d  ;;
 		*.xz|*.txz)  xz -dcT0 ;;
 		*.zst)       zstd -dc ;;
-    esac < "$1"
+	esac < "$1"
 }
 
 
 # Colors
 
-# Only set colors if the user didn't disable colors.
-equals "${NO_COLOR}" 1 || {
-    COLOR_RED="\e[0;91m"
+# Only set colors if the user didn't disable colors or if the
+# command is not being used in a pipe or redirection.
+equals "${NO_COLOR}" 1 || ! [ -t 1 ] || {
+	COLOR_RED="\e[0;91m"
 	COLOR_YELLOW="\e[0;93m"
-    COLOR_BLUE="\e[0;94m"
+	COLOR_BLUE="\e[0;94m"
 
-    COLOR_BOLD="\e[1m"
-    COLOR_RESET="\e[0m"
+	COLOR_BOLD="\e[1m"
+	COLOR_RESET="\e[0m"
 
 	LOG_PREFIX=">>> "
 }
@@ -546,7 +547,7 @@ pkg_depends() {
 	# Loop through the dependencies.
 	while read -r dep dep_type || ok "${dep}"; do
 		# Allow comments using '#'.
-		! ok "${dep##\#*}" || pkg_depends "${dep}" "${dep_type}" "" "$4" "$5 $1"
+		ok "${dep##\#*}" && pkg_depends "${dep}" "${dep_type}" "" "$4" "$5 $1"
 	done < "${pkg_dir}/depends"
 
 	# Add the package to the dependency list.
@@ -661,9 +662,15 @@ pkg_build() {
 		# $0 = build file
 		# $1 = path to root where files should be installed to
 
+		AR="${AR:-ar}"
 		CC="${CC:-cc}" \
 		CXX="${CXX:-c++}" \
+		NM="${NM:-nm}" \
+		RANLIB="${RANLIB:-ranlib}" \
 		DESTDIR="${pkg_root_dir}" \
+		GOPATH="${PWD}/go" \
+		BASE_FLAGS="${CFLAGS%%-flto=thin}" \
+		BASE_LDFLAGS="${LDFLAGS%%-flto=thin}" \
 		\
 		"${pkg_dir}/build" "${pkg_root_dir}" 2>&1 || {
 			err "Build for '${pkg_name}' failed."
@@ -855,6 +862,38 @@ pkg_conflicts() {
 	fi
 }
 
+# Check if a package is installable.
+# A package is installable when all its dependencies
+# are installed.
+# $1 = package name
+# $2 = depends file
+pkg_installable() {
+	info "Checking if '$1' is installable..."
+
+	# Only check for missing dependencies if the package
+	# has dependencies.
+	[ -f "$2" ] || return 0
+
+	# False positive.
+	# shellcheck disable=2094
+	while read -r dep dep_type || ok "${dep}"; do
+		# Skip all comments and build-time dependencies.
+		ok "${dep##\#*}" || continue
+		ok "${dep_type}" && continue
+
+		# Skip already installed dependencies.
+		[ -d "${sys_ins_dir}/${dep}" ] && continue
+
+		warn "${dep}"
+		set -- "$1" "$2" "$(($3 + 1))"
+	done < "$2"
+
+	# If the missing package count is above 1, exit the program.
+	case $3 in [1-9]*)
+		die "Package not installable, missing dependencies."
+	esac
+}
+
 # Install a built package tarball.
 pkg_install() {
 	tar_file="${pkg_bin_dir}/${pkg_name}-${pkg_version}.tar.${compress_method}"
@@ -869,6 +908,10 @@ pkg_install() {
 
 	# Check if the package is valid.
 	[ -f "${manifest_file}" ] || die "Not a valid package."
+
+	equals "${SLASH_FORCE}" 1 || {
+		pkg_installable "${pkg_name}" "${PWD}/${pkg_ins_dir}/${pkg_name}/depends"
+	}
 
 	# Check for file conflicts with other packages.
 	pkg_conflicts
