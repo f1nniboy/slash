@@ -14,7 +14,7 @@ SLASH_VERSION="0.2"
 # $1 = content
 # $2 = color
 log() {
-    printf "%b%b>>>%b %s\n" "$2" "${COLOR_BOLD}" "${COLOR_RESET}" "$1"
+    printf "%b%b%s%b%s\n" "$2" "${COLOR_BOLD}" "${LOG_PREFIX}" "${COLOR_RESET}" "$1"
 }
 
 info() {
@@ -211,6 +211,8 @@ equals "${NO_COLOR}" 1 || {
 
     COLOR_BOLD="\e[1m"
     COLOR_RESET="\e[0m"
+
+	LOG_PREFIX=">>> "
 }
 
 
