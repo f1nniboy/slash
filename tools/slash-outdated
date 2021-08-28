@@ -6,10 +6,22 @@ repology_version() {
 	# svg latest-version badge and extracting the version from the xml.
 	repology_name "$1"
 
-	r=$(curl -Ss "https://repology.org/badge/latest-versions/$remote.svg") && {
+	r=$(curl -Ss "https://repology.org/badge/latest-versions/${remote}.svg") && {
 		remote_ver=${r%</text>*}
 		remote_ver=${remote_ver##*>}
 	}
+
+	case ${remote} in
+		# Temporary workaround.
+		freetype-harfbuzz)
+			[ "${remote_ver}" = "2.10.4+2.9.0" ] && remote_ver="2.11.0+2.9.0"
+		;;
+
+		# Temporary workaround.
+		nodejs)
+			[ "${remote_ver}" = "16.9.0" ] && remote_ver="16.8.0"
+		;;
+	esac
 }
 
 repology_name() {
@@ -19,7 +31,7 @@ repology_name() {
 		remote=${1%%-bin}
 		remote=${remote%%-git}
 
-		printf "%s" "$remote" |
+		printf "%s" "${remote}" |
 
 		# Remote names are all lowercase.
 		tr '[:upper:]' '[:lower:]' |
@@ -28,8 +40,18 @@ repology_name() {
 		tr _ -
     )
 
-	case $remote in
+	case ${remote} in
 		baseinit|baselayout|slash)
+			remote=-
+		;;
+
+		# We are using BSD m4 and there is no Repology package for it.
+		m4)
+			remote=-
+		;;
+
+		# Remote version uses a fork which we don't use.
+		opendoas)
 			remote=-
 		;;
 
@@ -68,7 +90,7 @@ repology_name() {
 }
 
 main() {
-	echo "Checking Repology for outdated packages..."
+	echo "Checking repository '${1##*/}' for outdated packages..."
 
 	for pkg in */; do
 		pkg="${pkg%%/}"
@@ -87,7 +109,7 @@ main() {
 		}
 
 		case ${remote_ver} in
-			*", $ver"* | *"$ver,"* | "$ver")
+			*", ${ver}"* | *"${ver},"* | "${ver}")
 				# Package up-to-date, do nothing.
 			;;
 
