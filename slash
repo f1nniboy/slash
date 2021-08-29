@@ -921,6 +921,7 @@ pkg_install() {
 	# Check if the package is valid.
 	[ -f "${manifest_file}" ] || die "Not a valid package."
 
+	# Check if the package is installable.
 	equals "${SLASH_FORCE}" 1 || {
 		pkg_installable "${pkg_name}" "${PWD}/${pkg_ins_dir}/${pkg_name}/depends"
 	}
@@ -1006,7 +1007,9 @@ pkg_remove() {
 	trap '' INT
 
 	# Check if the package is removable.
-	pkg_removable "${pkg_name}"
+	equals "${SLASH_FORCE}" 1 || {
+		pkg_removable "${pkg_name}"
+	}
 
 	info "Removing '${pkg_name}'..."
 
