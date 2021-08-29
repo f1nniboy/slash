@@ -14,25 +14,25 @@ SLASH_VERSION="0.2"
 # $1 = content
 # $2 = color
 log() {
-    printf "%b%b%s%b%s\n" "$2" "${COLOR_BOLD}" "${LOG_PREFIX}" "${COLOR_RESET}" "$1"
+	printf "%b%b%s%b%s\n" "$2" "${COLOR_BOLD}" "${LOG_PREFIX}" "${COLOR_RESET}" "$1"
 }
 
 info() {
-    log "$1" "${COLOR_BLUE}"
+	log "$1" "${COLOR_BLUE}"
 }
 
 warn() {
-    log "$1" "${COLOR_YELLOW}"
+	log "$1" "${COLOR_YELLOW}"
 }
 
 err() {
-    log "$1" "${COLOR_RED}"
+	log "$1" "${COLOR_RED}"
 }
 
 # Exit the program.
 die() {
-    ok "$1" && err "$1"
-    exit 1
+	ok "$1" && err "$1"
+	exit 1
 }
 
 # Check if a string is non-null.
@@ -57,7 +57,7 @@ contains() {
 # Create a directory and change into it.
 # $1 = directory path
 mkcd() {
-    mkdir -p "$@" && cd "$1"
+	mkdir -p "$@" && cd "$1"
 }
 
 # Check if a directory is empty.
@@ -70,33 +70,33 @@ is_empty() {
 # $1 = first string to check
 # $2 = second string to check
 equals() {
-    # This replaces '[ "$var" = str ]' and '[ "$var" != str ]'.
-    case $1 in "$2") return 0 ;; *) return 1; esac
+	# This replaces '[ "$var" = str ]' and '[ "$var" != str ]'.
+	case $1 in "$2") return 0 ;; *) return 1; esac
 }
 
 # Replace all occurrences of substrings with substrings. This
 # function takes pairs of arguments iterating two at a time
 # until everything has been replaced.
 fnr() {
-    fnr_result="$1"
-    shift 1
+	fnr_result="$1"
+	shift 1
 
-    while :; do case ${fnr_result}-$# in
-        *"$1"*) fnr_result=${fnr_result%"$1"*}${2}${fnr_result##*"$1"} ;;
-           *-2) break ;;
-             *) shift 2
-    esac done
+	while :; do case ${fnr_result}-$# in
+		*"$1"*) fnr_result=${fnr_result%"$1"*}${2}${fnr_result##*"$1"} ;;
+		*-2) break ;;
+		*) shift 2
+	esac done
 }
 
 # Show the user a prompt.
 # $1 = message
 prompt() {
-    if ! equals "${SLASH_PROMPT}" 0; then
+	if ! equals "${SLASH_PROMPT}" 0; then
 		ok "$1" && info "$1"
-        info "Continue?"
+		info "Continue?"
 
-        read -r
-    fi
+		read -r
+	fi
 }
 
 # Create a uniquely named temporary file and store its absolute path
@@ -319,7 +319,7 @@ pkg_installed() {
 pkg_source_resolve() {
 	unset url source_file file_name url
 
-    fnr "${1%"${1##*[!/]}"}" \
+	fnr "${1%"${1##*[!/]}"}" \
         \\VERSION \  VERSION "${pkg_version}"         \  VERSION \
         \\MAJOR   \  MAJOR   "${pkg_version_major}"   \  MAJOR \
         \\MINOR   \  MINOR   "${pkg_version_minor}"   \  MINOR \
@@ -396,7 +396,7 @@ pkg_source_git() {
 	url="$1"
 
 	# If it's not a Git repository yet, initialize it.
-    if is_git_repo "${PWD}"; then
+	if is_git_repo "${PWD}"; then
 		info "Cloning '$1'..."
 
 		git init
@@ -427,7 +427,7 @@ pkg_source_get() {
 		aria2c|axel)	set -- -o   "$@" ;;
 		curl)			set -- -fLo "$@" ;;
 		wget|wget2)		set -- -O   "$@" ;;
-    esac
+	esac
 
 	"${cmd_get}" "$@" || {
 		die "Failed to download '$3'."
@@ -512,7 +512,7 @@ pkg_manifest() {
 		find "${pkg_root_dir}" ! -path "${pkg_root_dir}" -type d -exec printf "%s/\n" {} + \
 			-o \( ! -type d -a ! -name \*.la -a ! -name charset.alias \) -print
 	
-    # Sort the output in reverse. Directories appear after their contents.
+	# Sort the output in reverse. Directories appear after their contents.
 	} | sort -ur > "${tmp_file}"
 
 	# Remove the prefix from each entry.
@@ -536,7 +536,7 @@ pkg_depends() {
 
 	# Detect circular dependencies and bail out.
 	# Looks for multiple repeating patterns of a dependency.
-	case " $5 " in *" ${5##*} "*" $5 "*)
+	case " $5 " in *" ${5##*} "*" $1 "*)
 		err "Circular dependency detected."
 		die "$1 <> ${5##* }"
 	esac
