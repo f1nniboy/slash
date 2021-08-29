@@ -128,6 +128,18 @@ is_git_repo() {
 	git rev-parse 2> /dev/null && return 1 || return 0
 }
 
+# Check if the current user is the owner of a file or directory.
+# $1 = path
+is_owner() {
+	info="$(ls -ld "$1")" || die "Failed to get information about '$1'".
+
+	read -r _ _ owner _ <<EOF
+${info}
+EOF
+
+	equals "${USER}-${owner}" "${owner}-${USER}"
+}
+
 # Convert the output of 'ls' (rwxrwx---) to octal. This is simply
 # a 1-9 loop with the second digit being the value of the field.
 #
@@ -380,7 +392,7 @@ pkg_sources() {
 
 			url+*)
 				mkcd "${pkg_src_dir}/${pkg_name}"
-				pkg_source_get "${file_name}" "${url##url+}"
+				pkg_source_url "${file_name}" "${url##url+}"
 			;;
 		esac
 
@@ -413,10 +425,10 @@ pkg_source_git() {
 	git -c advice.detachedHead=0 checkout FETCH_HEAD
 }
 
-# Download a source.
+# Download a remote source.
 # $1 = file destination
 # $2 = source URL
-pkg_source_get() {
+pkg_source_url() {
 	# Check if the source is already downloaded.
 	[ -f "$1" ] && info "Found '$1'." && return 0
 
@@ -1070,7 +1082,7 @@ repo_update_git() {
 	git submodule update --remote --init --force
 }
 
-# Update a specific repository
+# Update a specific repository.
 # $1 = repository path
 repo_update_repo() {
 	cd "$1" || die "Repository '$1' is not accessible."
@@ -1079,6 +1091,12 @@ repo_update_repo() {
 	# This is to avoid pulling a Git repository multiple times.
 	contains "${repos}" "${PWD}" || {
 		repos="${repos} ${PWD}"
+
+		# Only update if the current user owns the repository.
+		is_owner "${PWD}" || {
+			info "Repository '$1' owned by user '${owner}', cannot update."
+			return
+		}
 
 		info "Updating repository '$1'..."
 
@@ -1225,8 +1243,12 @@ create_tmp_dirs() {
 }
 
 main() {
+	# Environment variable defaults
 	cmd_get="${SLASH_GET:-curl}"
 	compress_method="${SLASH_COMPRESS:-gz}"
+
+	# USER needs to be set.
+	ok "${USER}" || die "USER is not set."
 
 	# Store the date and time of script execution to be used for log files.
 	time="$(date +%Y-%m-%d-%H-%M)"

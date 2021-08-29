@@ -90,7 +90,7 @@ repology_name() {
 }
 
 main() {
-	echo "Checking repository '${1##*/}' for outdated packages..."
+	echo "Checking repository '$1' for outdated packages..."
 
 	for pkg in */; do
 		pkg="${pkg%%/}"

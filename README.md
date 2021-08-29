@@ -8,6 +8,12 @@ I do not claim credit for the idea and code, thank Dylan for the awesome idea!
 # Usage
 The package manager is based on KISS, which means that the usage should be identical.
 
+# Differences
+List of differences to KISS.
+
+* Smaller codebase
+* Personal changes
+
 # Missing features
 List of missing features, compared to KISS. Some were left out on purpose.
 
