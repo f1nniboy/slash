@@ -591,6 +591,7 @@ pkg_build_all() {
 	explicit_pkg=$*
 
 	info "Building: explicit: $*${deps:+, dependencies: ${deps## }}"
+	equals "${SLASH_PROMPT}" 0 || equals "${do_install}" 1 || prompt
 
 	# Intentional.
 	# shellcheck disable=2046,2086
@@ -603,7 +604,7 @@ pkg_build_all() {
 	for pkg in "$@"; do
 		pkg_find "${pkg}" 1
 
-		if pkg_cache "${pkg}"; then
+		if ! contains "${explicit_pkg}" "${pkg}" && pkg_cache "${pkg}"; then
 			info "Found pre-built binary for dependency '${pkg}'."
 			pkg_install "${pkg}"
 		else
@@ -640,11 +641,14 @@ pkg_build_all() {
 		pkg_clean 1
 		create_tmp_dirs
 
-		if ! contains "${explicit_pkg}" "${pkg}"; then
-			info "'${pkg}' is needed as a dependency, installing..."
+		if equals "${do_install:=0}" 1 || ! contains "${explicit_pkg}" "${pkg}"; then
+			info "'${pkg}' is needed as a dependency or has an update, installing..."
 			pkg_install "${pkg}"
 		fi
 	done
+
+	# Only prompt for installation if the installation isn't forced.
+	equals "${do_install:=0}" 1 ||
 
 	for pkg in ${explicit_pkg}; do
 		if ! equals "${SLASH_PROMPT}" 0; then
@@ -1049,8 +1053,11 @@ pkg_upgrade() {
 		done
 	}
 
+	# Automatically install the packages, without a prompt.
+	do_install=1
+
 	# Update the packages.
-	for pkg do
+	for _ do
 		info "Packages to update: $*"
 		prompt
 
@@ -1058,6 +1065,7 @@ pkg_upgrade() {
 		info "Updated all packages."
 	done
 
+	unset do_install
 	equals "$#" 0 && info "Nothing to do."
 }
 
