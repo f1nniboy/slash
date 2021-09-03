@@ -1,0 +1,134 @@
+#!/bin/sh -e
+# Enter a chroot.
+
+# Utilities
+
+# Log something to the terminal.
+# $1 = content
+# $2 = color
+log() {
+	printf "%b%b%s%b%s\n" "$2" "${COLOR_BOLD}" "${LOG_PREFIX}" "${COLOR_RESET}" "$1"
+}
+
+info() {
+	log "$1" "${COLOR_BLUE}"
+}
+
+err() {
+	log "$1" "${COLOR_RED}"
+}
+
+# Exit the program.
+die() {
+	[ "$1" ] && err "$1"
+	exit 1
+}
+
+# Run a command.
+# $@ = command
+run() {
+	info "Running '$*'..."
+	"$@"
+}
+
+
+# Colors
+
+# Only set colors if the user didn't disable colors or if the
+# command is not being used in a pipe or redirection.
+equals "${NO_COLOR}" 1 || ! [ -t 1 ] || {
+	COLOR_RED="\e[0;91m"
+	COLOR_YELLOW="\e[0;93m"
+	COLOR_BLUE="\e[0;94m"
+
+	COLOR_BOLD="\e[1m"
+	COLOR_RESET="\e[0m"
+
+	LOG_PREFIX=">>> "
+}
+
+
+clean() {
+	info "Unmounting host filesystems..."; {
+		run umount "$1/dev/shm"
+		run umount "$1/dev/pts"
+		run umount "$1/dev"
+		run umount "$1/proc"
+		run umount "$1/run"
+
+		# Ignore this command's output as it will fail on BIOS systems.
+		run umount "$1/sys/firmware/efi/efivars" 2> /dev/null || :
+
+		run umount "$1/sys"
+		run umount "$1/tmp"
+	}
+
+	info "Cleaning leftover host files..."; {
+		run rm -f "$1/etc/resolv.conf"
+	}
+}
+
+# This is a pure shell mountpoint implementation. We're dealing
+# with basic (and fixed/known) input so this doesn't need to
+# handle more complex cases.
+mounted() {
+	[ -e "$1" ]         || return 1
+	[ -e /proc/mounts ] || return 1
+
+	while read -r _ target _; do
+		[ "${target}" = "$1" ] && return 0
+	done < /proc/mounts
+
+	return 1
+}
+
+mmount() {
+	dest="$1"
+	shift
+
+	mounted "${dest}" || run mount "$@" "${dest}"
+}
+
+main() {
+	# Ensure that the path does not end with '/'.
+	set -- "${1%"${1##*[!/]}"}"
+
+	[ "$1" ]           || die "Specify a path to the root."
+	[ -d "$1" ]        || die "Given path does not exist."
+	[ "$(id -u)" = 0 ] || die "The script needs to be run as root."
+
+	trap 'clean "${1%"${1##*[!/]}"}"' EXIT INT
+
+	info "Mounting host filesystems..."; {
+		mmount "$1/dev"     -o bind  /dev
+		mmount "$1/dev/pts" -o bind  /dev/pts
+		mmount "$1/dev/shm" -t tmpfs shmfs
+		mmount "$1/proc"    -t proc  proc
+		mmount "$1/run"     -t tmpfs tmpfs
+		mmount "$1/sys"     -t sysfs sys
+
+		# Ignore this command's output as it will fail on BIOS systems.
+		mmount "$1/sys/firmware/efi/efivars" -t efivarfs efivarfs 2> /dev/null || :
+
+		mmount "$1/tmp"     -o mode=1777,nosuid,nodev -t tmpfs tmpfs
+	}
+
+	info "Copying /etc/resolv.conf from host..."; {
+		run cp -f /etc/resolv.conf "$1/etc"
+	}
+
+	info "Entering root..."; {
+		run chroot "$1" /usr/bin/env -i \
+			HOME=/root \
+			TERM="${TERM:-xterm-256color}" \
+			SHELL=/bin/sh \
+			USER=root \
+			LOGNAME=root \
+			CFLAGS="${CFLAGS:--march=native -O3 -pipe -flto=thin}" \
+			CXXFLAGS="${CXXFLAGS:--march=native -O3 -pipe -flto=thin}" \
+			LDFLAGS="${LDFLAGS:--Wl,-O3 -Wl,--as-needed --march=native -O3 -pipe -flto=thin}" \
+			/bin/sh -l
+	}
+}
+
+main "$1"
