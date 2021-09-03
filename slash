@@ -679,6 +679,7 @@ pkg_build() {
 		CXX="${CXX:-c++}" \
 		NM="${NM:-nm}" \
 		RANLIB="${RANLIB:-ranlib}" \
+		SLASH_ROOT="${SLASH_ROOT}" \
 		DESTDIR="${pkg_root_dir}" \
 		GOPATH="${PWD}/go" \
 		BASE_FLAGS="${CFLAGS%%-flto=thin}" \
