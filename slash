@@ -91,7 +91,7 @@ fnr() {
 # Show the user a prompt.
 # $1 = message
 prompt() {
-	if ! equals "${SLASH_PROMPT}" 0; then
+	if ! equals "${SLASH_PROMPT}" 1; then
 		ok "$1" && info "$1"
 		info "Continue?"
 
@@ -647,8 +647,10 @@ pkg_build_all() {
 	done
 
 	for pkg in ${explicit_pkg}; do
-		info "Do you want to install the built packages? [${explicit_pkg}]"
-		prompt && pkg_install "${pkg}"
+		if ! equals "${SLASH_PROMPT}" 0; then
+			info "Do you want to install the built packages? [${explicit_pkg}]"
+			prompt && pkg_install "${pkg}"
+		fi
 	done
 }
 
