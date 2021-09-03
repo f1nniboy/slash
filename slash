@@ -600,7 +600,7 @@ pkg_build_all() {
 	equals "$#" "${explicit_pkg_count}" || prompt
 
 	# Check for pre-built dependencies.
-	for pkg in ${deps}; do
+	for pkg in "$@"; do
 		pkg_find "${pkg}" 1
 
 		if pkg_cache "${pkg}"; then
