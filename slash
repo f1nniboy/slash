@@ -5,7 +5,7 @@
 
 
 # Constants
-SLASH_VERSION="0.3.0"
+SLASH_VERSION="0.3.1"
 
 
 # Utilities
@@ -591,7 +591,6 @@ pkg_build_all() {
 	explicit_pkg=$*
 
 	info "Building: explicit: $*${deps:+, dependencies: ${deps## }}"
-	equals "${SLASH_PROMPT}" 0 || equals "${do_install}" 1 || prompt
 
 	# Intentional.
 	# shellcheck disable=2046,2086
