@@ -38,7 +38,6 @@ run() {
 # command is not being used in a pipe or redirection.
 equals "${NO_COLOR}" 1 || ! [ -t 1 ] || {
 	COLOR_RED="\e[0;91m"
-	COLOR_YELLOW="\e[0;93m"
 	COLOR_BLUE="\e[0;94m"
 
 	COLOR_BOLD="\e[1m"

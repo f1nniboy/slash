@@ -115,13 +115,6 @@ tmp_file_copy() {
 	! [ -f "$2" ] || cp -f "$2" "${tmp_file}"
 }
 
-# Resolve a symlink.
-# Set the original path if it isn't a symlink.
-# $1 = path to resolve
-resolve_path() {
-	resolved_path="$(readlink "$1" || printf "%s\n" "$1")"
-}
-
 # Check if a path is a Git repository.
 # $1 = path to check
 is_git_repo() {
@@ -835,12 +828,11 @@ pkg_conflicts() {
 	info "Checking '${pkg_name}' for file conflicts..."
 
 	tmp_file "manifest-files"; manifest_files="${tmp_file}"
-	tmp_file "conflicts"; conflicts="${tmp_file}"
+	tmp_file "conflicts";      conflicts="${tmp_file}"
 
-	# Filter out all directories. Resolve all symlinks as well.
+	# Filter out all directories.
 	while read -r file; do case ${file} in *[!/])
-		resolve_path "${file}"
-		printf '%s\n' "${resolved_path}"
+		printf '%s\n' "${file}"
 	esac done < "${pkg_ext_dir}/${pkg_ins_dir}/${pkg_name}/manifest" > "${manifest_files}"
 
 	# Skip the conflict checks if no packages are installed.
@@ -864,8 +856,7 @@ pkg_conflicts() {
 	# Find file conflicts.
 	grep -Fxf "${manifest_files}" "$@" 2> /dev/null > "${conflicts}" || :
 
-	# If the file is not empty, indicating that there are 
-	# conflicts, exit.
+	# If the file is not empty, indicating that there are conflicts, exit.
 	if [ -s "${conflicts}" ]; then
 		err "Conflicts found with another package:"
 		IFS=:
@@ -944,7 +935,7 @@ pkg_install() {
 	# If the package is already installed and this is an upgrade, make
 	# a backup of the manifest file.
 	tmp_file_copy "manifest-copy" "${sys_ins_dir}/${pkg_name}/manifest"; manifest_copy="${tmp_file}"
-	tmp_file      "manifest-diff"; manifest_diff="${tmp_file}"
+	tmp_file      "manifest-diff";                                       manifest_diff="${tmp_file}"
 
 	# Generate a list of files which exist in the currently installed manifest
 	# but not in the new (to be installed) manifest.
