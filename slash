@@ -457,8 +457,8 @@ pkg_extract_tar() {
 	# Iterate over all directories in the first level of the
 	# tarball's manifest. Each directory is moved up a level.
 	#
-	# Slightly modified because Toybox's 'sort' doesn't seem
-	# to be compatible with Busybox's 'sort'.
+	# Slightly modified because Toybox 'sort' doesn't seem
+	# to be compatible with Busybox 'sort'.
 	while read -r dir; do case ${dir} in *?/?*) ;; *)
 		# Move the parent directory to prevent naming conflicts
 		# with the to-be-moved children.
@@ -951,7 +951,15 @@ pkg_install() {
 
 	# Decompress the tarball.
 	cd "${pkg_ext_dir}"
-	tar xf "${tar_file}"
+
+	# Add compatibility for Toybox 'tar'.
+	case ${compress_method} in
+		bz2)  opt=j ;;
+		gz)   opt=z ;;
+		xz)   opt=J ;;
+	esac
+	
+	tar "x${opt}f" "${tar_file}"
 
 	# Check if the package is valid.
 	[ -f "${manifest_file}" ] || die "Not a valid package."
