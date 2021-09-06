@@ -442,10 +442,48 @@ pkg_source_url() {
 # Extract a tar archive.
 # $1 = path to file
 pkg_extract_tar() {
-	tmp_file "tarball"
+	tmp_file "tarball";          tarball="${tmp_file}"
+	tmp_file "tarball-manifest"; tarball_manifest="${tmp_file}"
 
-	decompress "$1" > "${tmp_file}" || die "Failed to decompress '$1'."
-	tar xf "${tmp_file}" --strip-components 1 || die "Failed to extract '$1'."
+	decompress "$1" > "${tarball}" || die "Failed to decompress '$1'."
+	tar xf "${tarball}"            || die "Failed to extract '$1'."
+
+	# The sort command filters out all duplicate top-level directories
+	# from the tarball's manifest. This is an optimization as we avoid
+	# looping. (4000 times for Python!)
+	tar tf "${tarball}" | sort -ut / -k1,1 > "${tarball_manifest}" ||
+		die "Failed to extract manifest."
+
+	# Iterate over all directories in the first level of the
+	# tarball's manifest. Each directory is moved up a level.
+	#
+	# Slightly modified because Toybox's 'sort' doesn't seem
+	# to be compatible with Busybox's 'sort'.
+	while read -r dir; do case ${dir} in *?/?*) ;; *)
+		# Move the parent directory to prevent naming conflicts
+		# with the to-be-moved children.
+		mv -f "${dir}" "${pid}-${dir}"
+
+		# Move all children up a directory level. If the mv command
+		# fails, fallback to copying the remainder of the files.
+		#
+		# We can't use '-exec {} +' with any arguments between
+		# the '{}' and '+' as this is not POSIX. We must also
+		# use '$0' and '$@' to reference all arguments.
+		find "${pid}-${dir}/." ! -name . -prune \
+			-exec sh -c 'mv -f "$0" "$@" .' {} + 2> /dev/null ||
+
+		find "${pid}-${dir}/." ! -name . -prune \
+			-exec sh -c 'cp -fRp "$0" "$@" .' {} +
+
+		# Remove the directory now that all files have been
+		# transferred out of it. This can't be a simple 'rmdir'
+		# as we may leave files in here if any were copied.
+		rm -rf "${pid}-${dir}"
+	esac done < "${tarball_manifest}"
+
+	# Remove the tarball now that we are done with it.
+	rm -f "${tarball}"
 }
 
 # Extract the sources of a package.
