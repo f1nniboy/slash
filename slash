@@ -718,8 +718,6 @@ pkg_build() {
 		SLASH_ROOT="${SLASH_ROOT}" \
 		DESTDIR="${pkg_root_dir}" \
 		GOPATH="${PWD}/go" \
-		BASE_FLAGS="${CFLAGS%%-flto=thin}" \
-		BASE_LDFLAGS="${LDFLAGS%%-flto=thin}" \
 		\
 		"${pkg_dir}/build" "${pkg_root_dir}" 2>&1 || {
 			err "Build for '${pkg_name}' failed."
