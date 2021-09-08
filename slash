@@ -1217,6 +1217,17 @@ repo_update() {
 
 		repo_update_repo "${root_dir:-${repo}}"
 	done
+
+	echo
+	info "Message of the day"
+
+	for repo do
+		# Only show the MOTD if it exists.
+		[ -f "${repo}/MOTD" ] && cat "${repo}/MOTD"
+	done
+
+	info "Message of the day"
+	echo
 }
 
 
