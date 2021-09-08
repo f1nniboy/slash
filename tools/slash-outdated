@@ -118,7 +118,7 @@ main() {
 
 for repo do
 	[ "${repo}" ] || {
-		echo "Usage: $0 [path to repository]"
+		echo "Usage: ${0##*/} [path to repository]"
 		exit 1
 	}
 

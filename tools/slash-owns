@@ -1,19 +1,35 @@
 #!/bin/sh -e
 # Find out which package owns a file.
 
-[ -f "${SLASH_ROOT}/$1" ] || {
-	echo "Usage: $0 [path/to/file]"
+# Follow symlinks to any path.
+case $1 in
+	/*)
+		cd -P "${SLASH_ROOT}${1%/*}"
+	;;
+
+	*/*)
+		cd -P "${1%/*}"
+	;;
+
+	*)
+		cd -P .
+	;;
+esac
+
+# Check if the specified path is a file.
+[ -f "${PWD}/${1##*/}" ] || {
+	echo "Usage: ${0##/*} [path to file]"
 	exit 1
 }
 
 # Print the full path to the manifest file which contains
 # the match to our search.
 pkg="$(grep -lFx \
-	"/$1" \
+	"${PWD}/${1##*/}" \
 	"${SLASH_ROOT}/var/db/slash/installed/"*/manifest)"
 
 # Extract the package name from the path.
 pkg="${pkg%/*}"
 pkg="${pkg##*/}"
 
-echo "${pkg}"
+printf "%s\n" "${pkg}"
