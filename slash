@@ -459,7 +459,7 @@ pkg_extract_tar() {
 	#
 	# Slightly modified because Toybox 'sort' doesn't seem
 	# to be compatible with Busybox 'sort'.
-	while read -r dir; do case ${dir} in *?/?*) ;; *)
+	while IFS=/ read -r dir _; do case ${dir#.} in *?*)
 		# Move the parent directory to prevent naming conflicts
 		# with the to-be-moved children.
 		mv -f "${dir}" "${pid}-${dir}"
