@@ -1,31 +1,19 @@
 #!/bin/sh
 # Check a repository for outdated packages.
 
+# Grab the package's version as known by repology.org by downloading the
+# svg latest-version badge and extracting the version from the xml.
 repology_version() {
-	# Grab the package's version as known by repology.org by downloading the
-	# svg latest-version badge and extracting the version from the xml.
 	repology_name "$1"
 
 	r=$(curl -Ss "https://repology.org/badge/latest-versions/${remote}.svg") && {
 		remote_ver=${r%</text>*}
 		remote_ver=${remote_ver##*>}
 	}
-
-	case ${remote} in
-		# Temporary workaround.
-		freetype-harfbuzz)
-			[ "${remote_ver}" = "2.10.4+2.9.0" ] && remote_ver="2.11.0+2.9.0"
-		;;
-
-		# Temporary workaround.
-		nodejs)
-			[ "${remote_ver}" = "16.9.0" ] && remote_ver="16.8.0"
-		;;
-	esac
 }
 
+# Fix any known naming inconsistences between packages and Repology.
 repology_name() {
-	# Fix any known naming inconsistences between packages and Repology.
 	remote=$(
 		# Strip unrelated suffixes.
 		remote=${1%%-bin}
@@ -104,7 +92,7 @@ main() {
 			continue
 
 		repology_version "${pkg}" || {
-			echo "${pkg}: network error"
+			echo "${pkg}: error"
 			continue
 		}
 
