@@ -1206,7 +1206,7 @@ repo_update() {
 	{ IFS=:; set -- ${SLASH_PATH}; unset IFS; }
 
 	for repo do
-		if git -C "${repo}" remote > /dev/null 2>&1; then
+		if ok "$(git -C "${repo}" remote 2> /dev/null)"; then
 			repo_type="git"
 
 			# Get the root directory of the repository.
