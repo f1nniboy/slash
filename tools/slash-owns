@@ -18,7 +18,7 @@ esac
 
 # Check if the specified path is a file.
 [ -f "${PWD}/${1##*/}" ] || {
-	echo "Usage: ${0##/*} [path to file]"
+	echo "Usage: ${0##*/} [path to file]"
 	exit 1
 }
 
