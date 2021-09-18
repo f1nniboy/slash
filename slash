@@ -124,37 +124,13 @@ is_git_repo() {
 # Check if the current user is the owner of a file or directory.
 # $1 = path
 is_owner() {
-	info="$(ls -ld "$1")" || die "Failed to get information about '$1'".
-
-	read -r _ _ owner _ <<EOF
-${info}
-EOF
-
+	owner="$(stat -c %U "$1")"
 	equals "${USER}-${owner}" "${owner}-${USER}"
 }
 
-# Convert the output of 'ls' (rwxrwx---) to octal. This is simply
-# a 1-9 loop with the second digit being the value of the field.
-#
-# NOTE: This drops setgid/setuid permissions and does not include
-# them in the conversion. This is intentional.
-file_rwx() {
-	unset oct o
-	rwx="$(ls -ld "$1")"
-
-	for c in 14 22 31 44 52 61 74 82 91; do
-		rwx=${rwx#?}
-
-		case ${rwx} in
-			[rwx]*) o=$((o + ${c#?})) ;;
-			 [st]*) o=$((o + 1)) ;;
-		 esac
-
-		 case $((${c%?} % 3)) in 0)
-			oct="${oct}${o}"
-			o=0
-		esac
-	done
+# Get the permissions of a file or directory in octal.
+file_perm() {
+	oct="$(stat -c %a "$1")"
 }
 
 # Run all hooks in SLASH_HOOK.
@@ -838,7 +814,7 @@ pkg_install_files() {
 				equals "${should_install}" 1 || continue
 
 				[ -d "${dest_file}" ] || {
-					file_rwx "$1/${file#/}"
+					file_perm "$1/${file#/}"
 					mkdir -m "${oct}" "${dest_file}"
 				}
 			;;
